@@ -1,0 +1,89 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aslmp"
+version = "0.1.0.dev0"
+description = "An async SLMP client for Mitsubishi MELSEC PLCs"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.11"
+authors = [{ name = "Acaysia", email = "dev@acaysia.com" }]
+keywords = ["slmp", "mc-protocol", "mitsubishi", "melsec", "plc", "iq-f", "iq-r", "fx5u"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Manufacturing",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Hardware",
+    "Typing :: Typed",
+]
+# Zero runtime dependencies. This is deliberate and load-bearing: the wheel must
+# install on a Jetson's aarch64, on a locked-down plant PC, and inside a control
+# loop, with no compiler and no transitive supply chain.
+dependencies = []
+
+[project.optional-dependencies]
+# The conformance simulator. Kept out of the default wheel so the client stays
+# dependency-free and import-light; it has no third-party dependencies either.
+testing = []
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "hypothesis>=6.100",
+    "mypy>=1.11",
+    "ruff>=0.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/AcaysiaChem/aslmp"
+Source = "https://github.com/AcaysiaChem/aslmp"
+Issues = "https://github.com/AcaysiaChem/aslmp/issues"
+
+[project.scripts]
+aslmp = "aslmp.tools.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aslmp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+asyncio_mode = "auto"
+markers = [
+    "hardware: needs a real PLC; skipped unless ASLMP_TEST_HOST is set",
+    "simulator: needs the aslmp.testing simulator",
+    "slow: not run by default in the fast unit sweep",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+disallow_any_explicit = false
+files = ["src/aslmp", "tests"]
+
+[tool.ruff]
+line-length = 96
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM", "RUF", "ANN", "PTH", "TID"]
+ignore = [
+    "ANN401",  # Any is occasionally correct at the observability boundary
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Layer 0 must stay pure. Enforced properly by tests/test_layering.py; this is
+# only the fast, obvious guard.
+"socket".msg = "wire/ and commands/ are I/O-free; sockets belong in transport/"
