@@ -6,6 +6,6 @@ effects: importing ``aslmp`` must not open a socket, read a file, or start a loo
 
 from __future__ import annotations
 
-__version__ = "0.1.0.dev0"
+from aslmp._version import __version__
 
 __all__ = ["__version__"]

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aslmp"
-version = "0.1.0.dev0"
+dynamic = ["version"]
 description = "An async SLMP client for Mitsubishi MELSEC PLCs"
 readme = "README.md"
 license = "Apache-2.0"
@@ -49,6 +49,9 @@ Issues = "https://github.com/AcaysiaChem/aslmp/issues"
 [project.scripts]
 aslmp = "aslmp.tools.__main__:main"
 
+[tool.hatch.version]
+path = "src/aslmp/_version.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/aslmp"]
 
@@ -82,6 +85,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN"]
+# transport/ is the ONE place a socket is legal; the layering test in
+# tests/unit/test_layering.py is what actually enforces that, not this line.
+"src/aslmp/transport/**" = ["TID251"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # Layer 0 must stay pure. Enforced properly by tests/test_layering.py; this is
