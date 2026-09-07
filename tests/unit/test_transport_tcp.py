@@ -1,0 +1,517 @@
+"""The TCP transport, against a real loopback server we control. No PLC involved.
+
+Every behaviour asserted here was measured on **MELSEC iQ-F FX5U-32MT/DS fw 1.065** and
+none of them can be reproduced against a PLC on demand -- the CPU FINs a second
+connection to a busy entry, splits a 1931-byte response at the MSS boundary on one read
+in three, and answers a coding mismatch with silence. A fake server reproduces all three
+deterministically, which is the only way they get a regression test at all.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import socket  # noqa: TID251 - transport tests need a real socket; that is the point
+import time
+from dataclasses import dataclass, field
+from types import TracebackType
+from typing import Self
+
+import pytest
+
+from aslmp.errors import (
+    SlmpConcurrentTransactionError,
+    SlmpConnectionEntryBusyError,
+    SlmpConnectionLostError,
+    SlmpNotConnectedError,
+    SlmpProtocolError,
+    SlmpTimeoutError,
+    TimeoutCause,
+)
+from aslmp.timing import TimingBuilder
+from aslmp.transport.base import Deadline
+from aslmp.transport.tcp import TcpTransport
+
+REQUEST = (
+    b"\x50\x00\x00\xff\xff\x03\x00\x0c\x00\x00\x00"
+    b"\x01\x04\x00\x00\xa8\x00\x00\x00\xd0\x02\x00"
+)
+"""One real 3E/binary Read Words request. The transport never looks inside it."""
+
+
+# --------------------------------------------------------------------------------------
+# A fake SLMP-shaped server. It never parses anything; it replays scripted bytes.
+# --------------------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class Reply:
+    """What the server does when a request arrives."""
+
+    chunks: tuple[bytes, ...] = ()
+    delay: float = 0.0
+    """Held before the first byte goes out -- the PLC's ~7 ms service processing."""
+    gap: float = 0.0
+    """Held between chunks -- the measured 3.0 ms MSS split."""
+    close_after: bool = False
+
+
+@dataclass(slots=True)
+class FakeServer:
+    """A loopback listener that replays scripted replies and can behave like an FX5U.
+
+    ``max_connections`` reproduces the measured one-connection-per-entry rule: the CPU
+    *accepts* the second connection and then immediately FINs it, so ``socket.connect()``
+    succeeds and the client learns the truth from a zero-byte read.
+    """
+
+    replies: list[Reply] = field(default_factory=list)
+    default: Reply | None = None
+    max_connections: int = 1
+    received: list[bytes] = field(default_factory=list)
+    connections: int = 0
+    port: int = 0
+    _server: asyncio.AbstractServer | None = None
+
+    async def __aenter__(self) -> Self:
+        self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+        self.port = int(self._server.sockets[0].getsockname()[1])
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        server = self._server
+        if server is not None:
+            server.close()
+            await server.wait_closed()
+
+    async def _handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        self.connections += 1
+        if self.connections > self.max_connections:
+            writer.close()  # accept, then FIN: exactly what the FX5U does
+            return
+        try:
+            while True:
+                data = await reader.read(65536)
+                if not data:
+                    return
+                self.received.append(data)
+                reply = self.replies.pop(0) if self.replies else self.default
+                if reply is None:
+                    continue  # silence: the measured coding-mismatch failure
+                if reply.delay:
+                    await asyncio.sleep(reply.delay)
+                for index, chunk in enumerate(reply.chunks):
+                    if index:
+                        await asyncio.sleep(reply.gap)
+                    writer.write(chunk)
+                    await writer.drain()
+                if reply.close_after:
+                    writer.close()
+                    return
+        except (ConnectionError, asyncio.CancelledError):  # pragma: no cover - teardown
+            return
+
+
+class FixedLength:
+    """A ``Reassembler`` that wants exactly ``total`` bytes and knows nothing else.
+
+    The transport is not allowed to import ``aslmp.wire``, so its tests do not either:
+    if these pass with this three-line stand-in, the transport really is driving the
+    read from the structural protocol and not from a frame it secretly understands.
+    """
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.data = bytearray()
+
+    @property
+    def bytes_needed(self) -> int:
+        return self.total - len(self.data)
+
+    def feed(self, data: bytes, /) -> None:
+        self.data += data
+
+
+def a_deadline(seconds: float = 2.0) -> Deadline:
+    return Deadline.after(seconds, clock=time.monotonic_ns)
+
+
+def a_timing() -> TimingBuilder:
+    timing = TimingBuilder(time.monotonic_ns)
+    timing.gate_acquired()
+    timing.encoded()
+    return timing
+
+
+async def connected(server: FakeServer) -> TcpTransport:
+    transport = TcpTransport("127.0.0.1", server.port)
+    await transport.open(a_deadline())
+    return transport
+
+
+# --------------------------------------------------------------------------------------
+# Open
+# --------------------------------------------------------------------------------------
+
+
+async def test_open_reports_both_ends_and_sets_nodelay() -> None:
+    async with FakeServer() as server:
+        transport = TcpTransport("127.0.0.1", server.port)
+        binding = await transport.open(a_deadline())
+        try:
+            assert binding.peer == ("127.0.0.1", server.port)
+            assert binding.local[1] != 0  # a silent socket rebuild shows up here
+            assert transport.is_open
+            assert transport.binding == binding
+            assert transport.max_in_flight == 1
+        finally:
+            await transport.close()
+
+
+async def test_open_refuses_a_second_socket_on_one_transport() -> None:
+    async with FakeServer() as server:
+        transport = await connected(server)
+        try:
+            with pytest.raises(SlmpNotConnectedError):
+                await transport.open(a_deadline())
+        finally:
+            await transport.close()
+
+
+async def test_close_is_idempotent() -> None:
+    async with FakeServer() as server:
+        transport = await connected(server)
+        await transport.close()
+        await transport.close()
+        assert not transport.is_open
+
+
+async def test_a_second_connection_to_a_busy_entry_is_named_not_guessed() -> None:
+    """The measured accept-then-FIN. Graft G2 classifies it; the first read proves it.
+
+    Whether the FIN has arrived by the time the non-blocking probe runs is a scheduling
+    race on loopback, and the design says so: the probe classifies, it never proves. So
+    the assertion is on the promise that actually holds -- a second connection to a
+    one-entry configuration raises :class:`SlmpConnectionEntryBusyError`, at the open or
+    at the first read, and never returns wrong data or a bare timeout.
+    """
+    async with FakeServer(max_connections=1) as server:
+        first = await connected(server)
+        try:
+            second = TcpTransport("127.0.0.1", server.port)
+            with pytest.raises(SlmpConnectionEntryBusyError) as caught:
+                await second.open(a_deadline())
+                await second.exchange(
+                    REQUEST, FixedLength(20), a_deadline(), a_timing()
+                )
+            await second.close()
+            assert "entry" in str(caught.value).lower()
+        finally:
+            await first.close()
+
+
+async def a_pair(*, then: str) -> tuple[socket.socket, socket.socket]:
+    """A connected loopback pair where the server end has already done ``then``.
+
+    The test waits until the client end can actually *see* the consequence with a
+    non-blocking peek, so graft G2's classifier is then exercised with no race at all.
+    ``open()`` itself cannot be pinned down this way -- whether the FIN has arrived by
+    the time the probe runs is exactly the scheduling race the design calls out, which
+    is why the probe classifies and the handshake proves.
+    """
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client.setblocking(False)
+    loop = asyncio.get_running_loop()
+    await loop.sock_connect(client, listener.getsockname())
+    server, _ = listener.accept()
+    listener.close()
+    if then == "fin":
+        server.close()
+    else:
+        server.sendall(b"\xd0\x00hello")
+    for _ in range(500):
+        try:
+            if client.recv(1, socket.MSG_PEEK) is not None:
+                break
+        except BlockingIOError:
+            await asyncio.sleep(0.002)
+    return client, server
+
+
+async def test_a_fin_that_has_already_arrived_is_named_entry_busy() -> None:
+    """Graft G2, with the race removed: the FIN is provably delivered before the check."""
+    client, server = await a_pair(then="fin")
+    transport = TcpTransport("127.0.0.1", 5002)
+    try:
+        with pytest.raises(SlmpConnectionEntryBusyError) as caught:
+            transport._check_no_early_eof(client)
+    finally:
+        client.close()
+        server.close()
+    assert "already in use" in str(caught.value)
+    assert "pooling" in str(caught.value)
+
+
+async def test_unsolicited_bytes_before_anything_was_sent_are_refused() -> None:
+    """Bytes on a fresh connection are somebody's message; guessing whose desynchronises."""
+    client, server = await a_pair(then="greet")
+    transport = TcpTransport("127.0.0.1", 5002)
+    try:
+        with pytest.raises(SlmpProtocolError) as caught:
+            transport._check_no_early_eof(client)
+    finally:
+        client.close()
+        server.close()
+    assert "unsolicited" in str(caught.value)
+
+
+async def test_a_healthy_fresh_connection_passes_the_probe_with_no_wait() -> None:
+    """The common case: nothing has arrived, the check costs nothing and says nothing."""
+    async with FakeServer() as server:
+        transport = await connected(server)
+        try:
+            assert transport.is_open
+        finally:
+            await transport.close()
+
+
+async def test_connect_to_a_dead_port_never_reports_success() -> None:
+    """A refused connect and a black-holed one are both failures, and neither is silent.
+
+    Which one a host produces is not ours to choose -- a firewall that drops instead of
+    resetting turns the refusal into silence -- so both outcomes are asserted, and both
+    carry their own diagnosis.
+    """
+    closed = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    closed.bind(("127.0.0.1", 0))
+    port = int(closed.getsockname()[1])
+    closed.close()
+    transport = TcpTransport("127.0.0.1", port)
+    with pytest.raises((SlmpNotConnectedError, SlmpTimeoutError)) as caught:
+        await transport.open(a_deadline(1.0))
+    error: BaseException = caught.value
+    if isinstance(error, SlmpNotConnectedError):
+        assert error.reason == "connect-failed"
+        assert "Nothing was sent" in str(error)
+    elif isinstance(error, SlmpTimeoutError):
+        assert TimeoutCause.WRONG_PORT in error.likely_causes
+    assert not transport.is_open
+
+
+# --------------------------------------------------------------------------------------
+# Exchange
+# --------------------------------------------------------------------------------------
+
+
+async def test_one_exchange_writes_the_request_and_reads_exactly_the_response() -> None:
+    response = bytes(range(20))
+    async with FakeServer(default=Reply(chunks=(response,))) as server:
+        transport = await connected(server)
+        try:
+            reassembler = FixedLength(20)
+            timing = a_timing()
+            result = await transport.exchange(REQUEST, reassembler, a_deadline(), timing)
+        finally:
+            await transport.close()
+    assert server.received == [REQUEST]
+    assert bytes(reassembler.data) == response
+    assert result.sent and result.responded
+    assert result.bytes_sent == len(REQUEST)
+    assert result.bytes_received == 20
+    assert timing.sent_at is not None
+
+
+async def test_the_read_stops_at_the_message_and_leaves_the_next_one_alone() -> None:
+    """Never ``recv(4096)``. A surplus read is how the next transaction gets stale bytes."""
+    async with FakeServer(default=Reply(chunks=(bytes(40),))) as server:
+        transport = await connected(server)
+        try:
+            reassembler = FixedLength(20)
+            result = await transport.exchange(
+                REQUEST, reassembler, a_deadline(), a_timing()
+            )
+            assert result.bytes_received == 20
+            assert len(reassembler.data) == 20
+            # The other 20 bytes are still on the socket, unread and unattributed.
+            second = FixedLength(20)
+            await transport.exchange(REQUEST, second, a_deadline(), a_timing())
+            assert len(second.data) == 20
+        finally:
+            await transport.close()
+
+
+async def test_a_segmented_response_is_reassembled_and_stamped_on_the_last_chunk() -> None:
+    """The measured 1460 + 471 split. Stamping the first chunk reports 11 ms for 14 ms."""
+    head, tail = bytes(1460), bytes(471)
+    async with FakeServer(default=Reply(chunks=(head, tail), gap=0.02)) as server:
+        transport = await connected(server)
+        try:
+            reassembler = FixedLength(1931)
+            timing = a_timing()
+            result = await transport.exchange(REQUEST, reassembler, a_deadline(), timing)
+        finally:
+            await transport.close()
+    assert result.bytes_received == 1931
+    assert len(reassembler.data) == 1931
+    assert len(timing.chunks) >= 2
+    record = timing.build()
+    assert record.segmented
+    assert record.received_at == record.chunks[-1].at
+    assert record.first_byte_at == record.chunks[0].at
+    assert record.transfer_ns >= 15_000_000  # the 20 ms gap the server held
+
+
+async def test_silence_raises_a_timeout_that_blames_the_coding_first() -> None:
+    """Wrong coding, wrong frame, wrong transport: all three fail by saying nothing."""
+    async with FakeServer(default=None) as server:
+        transport = await connected(server)
+        try:
+            with pytest.raises(SlmpTimeoutError) as caught:
+                await transport.exchange(
+                    REQUEST, FixedLength(20), a_deadline(0.2), a_timing()
+                )
+        finally:
+            await transport.close()
+    assert caught.value.likely_causes[0] is TimeoutCause.CODING_MISMATCH
+    assert caught.value.bytes_received == 0
+
+
+async def test_a_partial_response_blames_the_overstated_length_first() -> None:
+    async with FakeServer(default=Reply(chunks=(bytes(9),))) as server:
+        transport = await connected(server)
+        try:
+            with pytest.raises(SlmpTimeoutError) as caught:
+                await transport.exchange(
+                    REQUEST, FixedLength(20), a_deadline(0.25), a_timing()
+                )
+        finally:
+            await transport.close()
+    assert caught.value.likely_causes[0] is TimeoutCause.REQUEST_LENGTH_OVERSTATED
+    assert caught.value.bytes_received == 9
+
+
+async def test_silence_after_a_working_transaction_blames_the_plc_not_the_coding() -> None:
+    async with FakeServer(replies=[Reply(chunks=(bytes(20),))], default=None) as server:
+        transport = await connected(server)
+        try:
+            await transport.exchange(REQUEST, FixedLength(20), a_deadline(), a_timing())
+            assert transport.transactions_completed == 1
+            with pytest.raises(SlmpTimeoutError) as caught:
+                await transport.exchange(
+                    REQUEST, FixedLength(20), a_deadline(0.2), a_timing()
+                )
+        finally:
+            await transport.close()
+    assert caught.value.likely_causes[0] is TimeoutCause.PLC_STOPPED_OR_RESET
+    assert TimeoutCause.CODING_MISMATCH not in caught.value.likely_causes
+
+
+async def test_a_zero_byte_read_on_the_first_transaction_is_entry_busy() -> None:
+    async with FakeServer(default=Reply(close_after=True)) as server:
+        transport = await connected(server)
+        try:
+            with pytest.raises(SlmpConnectionEntryBusyError):
+                await transport.exchange(
+                    REQUEST, FixedLength(20), a_deadline(), a_timing()
+                )
+        finally:
+            await transport.close()
+
+
+async def test_a_zero_byte_read_after_a_working_transaction_is_a_lost_connection() -> None:
+    """The entry was demonstrably ours, so the same EOF means something else entirely."""
+    async with FakeServer(
+        replies=[Reply(chunks=(bytes(20),)), Reply(close_after=True)]
+    ) as server:
+        transport = await connected(server)
+        try:
+            await transport.exchange(REQUEST, FixedLength(20), a_deadline(), a_timing())
+            with pytest.raises(SlmpConnectionLostError):
+                await transport.exchange(
+                    REQUEST, FixedLength(20), a_deadline(), a_timing()
+                )
+        finally:
+            await transport.close()
+
+
+async def test_a_truncated_response_then_a_close_is_a_lost_connection() -> None:
+    async with FakeServer(default=Reply(chunks=(bytes(9),), close_after=True)) as server:
+        transport = await connected(server)
+        try:
+            with pytest.raises(SlmpConnectionLostError) as caught:
+                await transport.exchange(
+                    REQUEST, FixedLength(20), a_deadline(), a_timing()
+                )
+        finally:
+            await transport.close()
+    assert "9 byte(s)" in str(caught.value)
+
+
+async def test_exchange_on_a_closed_transport_says_nothing_was_sent() -> None:
+    transport = TcpTransport("127.0.0.1", 1)
+    with pytest.raises(SlmpNotConnectedError) as caught:
+        await transport.exchange(REQUEST, FixedLength(20), a_deadline(), a_timing())
+    assert caught.value.reason == "closed"
+
+
+async def test_two_concurrent_exchanges_are_refused_by_the_transport_itself() -> None:
+    """Belt and braces beneath the gate: this is the corruption, so both layers refuse."""
+    async with FakeServer(default=Reply(chunks=(bytes(20),), delay=0.05)) as server:
+        transport = await connected(server)
+        try:
+            first = asyncio.create_task(
+                transport.exchange(REQUEST, FixedLength(20), a_deadline(), a_timing())
+            )
+            await asyncio.sleep(0.01)
+            with pytest.raises(SlmpConcurrentTransactionError) as caught:
+                await transport.exchange(
+                    REQUEST, FixedLength(20), a_deadline(), a_timing()
+                )
+            await first
+        finally:
+            await transport.close()
+    assert "0x0000" in str(caught.value)
+
+
+async def test_an_exchange_that_expects_no_response_sends_and_returns() -> None:
+    """Remote Reset is the only such request; the CPU resets before it can answer."""
+    async with FakeServer(default=None) as server:
+        transport = await connected(server)
+        try:
+            result = await transport.exchange(
+                REQUEST, FixedLength(20), a_deadline(), a_timing(), expect_response=False
+            )
+        finally:
+            await transport.close()
+    assert result.sent
+    assert not result.responded
+    assert result.bytes_received == 0
+
+
+async def test_transactions_completed_resets_when_the_socket_is_rebuilt() -> None:
+    """A reconnect makes the per-connection facts unproven again, so the count restarts."""
+    async with FakeServer(default=Reply(chunks=(bytes(20),)), max_connections=5) as server:
+        transport = await connected(server)
+        await transport.exchange(REQUEST, FixedLength(20), a_deadline(), a_timing())
+        assert transport.transactions_completed == 1
+        await transport.close()
+        await transport.open(a_deadline())
+        try:
+            assert transport.transactions_completed == 0
+        finally:
+            await transport.close()
+
+
+def test_repr_says_where_it_points_and_whether_it_is_open() -> None:
+    transport = TcpTransport("192.168.10.250", 5002)
+    assert "192.168.10.250" in repr(transport)
+    assert "closed" in repr(transport)
