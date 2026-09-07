@@ -1,0 +1,22 @@
+# Every manual any citation in this package may name, with the exact revision that was
+# read. Revisions matter: JY997D56001 rev D/E and rev K print the SAME X/Y example bytes
+# under different (octal-legal vs Q-series hexadecimal) captions, which is how we know
+# rev K's 3E binary X/Y examples were never recomputed.
+# status: read = a copy was downloaded and read for this survey.
+#         not_obtained = named by another source; we do not have it. Nothing may cite it
+#         except an ambiguity row that says we are missing it.
+manual	revision	title	pages	date	status	url	note
+SH(NA)-080956ENG	M	SLMP Reference Manual	244	2025-04	read	https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh080956eng/sh080956engm.pdf	The primary frame, command and device-code reference. Generic SLMP, not FX5-specific.
+SH(NA)-080008	AB	MELSEC Communication Protocol Reference Manual (RJ71C24)	500	2022-05	read	https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh080008/sh080008ab.pdf	Independent of SH(NA)-080956ENG and agrees with it on every 3E/4E field. Used to break ties.
+JY997D56001	K	MELSEC iQ-F FX5 User's Manual (SLMP)	164	2022-04	read	https://dl.mitsubishielectric.com/dl/fa/document/manual/plcf/jy997d56001/jy997d56001k.pdf	FX5 device table, FX5 point limits, FX5 worked examples. Diverges from SH(NA)-080956ENG on limits and on the 1002/1005/1006 fixed field.
+JY997D56001	E	MELSEC iQ-F FX5 User's Manual (SLMP), earlier revision	114	2016-10	read	http://www.atronika.com/Mitsubishi/PLC/MITSUBISHI_manual_plc_fx5_slmp.pdf	Third-party mirror. Carries the identical 3E binary X/Y example bytes under Q-series hexadecimal captions (Y2F, X2F, Y17F), which is the evidence that rev K renamed them to octal without recomputing.
+JY997D56201	B	MELSEC iQ-F FX5 User's Manual (Ethernet Communication)	136		read	https://www.atronika.com/Mitsubishi/PLC/MITSUBISHI_manual_plc_fx5_ethernet.pdf	Third-party mirror. States 3E only on the FX5 built-in port; contradicted by measurement, see A-IQF-4E.
+JY997D55401	unknown	MELSEC iQ-F FX5 User's Manual (Application)	664		read	https://eu-assets.contentstack.com/v3/assets/blt5412ff9af9aef77f/blt9092eae80863aba2/64636d06398b322ee74a3eef/FX5_User_s_Manual_(Application).pdf	Revision letter was not recorded by the survey that read it. GX Works3 parameterisable device ranges (14.4) and the CPU-detected 4000H-4FFFH codes (Appendix 3).
+JY997D55301	F	MELSEC iQ-F FX5U User's Manual (Hardware)	220		read	https://www.educazionedigitale.it/mitsubishielectric/wp-content/uploads/2024/09/Allegato-2-Studente-FX5U-Users-manual-Hardware-JY997D55301-F.pdf	Third-party mirror. Numbering base per device (the octal X/Y statement) and maximum device points.
+JY997D60801	G	MELSEC iQ-F FX5 User's Manual (MELSEC Communication Protocol)			read	https://dl.mitsubishielectric.com/dl/fa/document/manual/plcf/jy997d60801/jy997d60801g.pdf	Serial MC protocol on FX5. Read only to confirm 3E/4E over Ethernet carry no sum check.
+SH(NA)-081257ENG	AD	MELSEC iQ-R Ethernet User's Manual (Application)	580	2024-11	read	https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh081257eng/sh081257engad.pdf	The most complete C0xx end-code list, and the warning that UDP datagrams may be lost or reordered.
+SH(NA)-081263ENG	AA	MELSEC iQ-R CPU Module User's Manual (Startup)	112		read	https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh081263eng/sh081263engaa.pdf	iQ-R default device ranges, including R and ZR defaulting to zero points.
+SH(NA)-081105ENG	G	MELSEC-L Ethernet Interface Module User's Manual (Basic)	382		read	https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh081105eng/sh081105engg.pdf	Q/L end codes and the 1E-frame one-byte end-code family.
+SH(NA)-080010	R	MELSEC-Q/L Ethernet Interface Module User's Manual (Application)			read	https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh080010/sh080010r.pdf	Read to confirm the ABSENCE of any 4E frame documentation for Q/L.
+SH(NA)-080811ENG	X	QnUCPU User's Manual (Communication via Built-in Ethernet Port)			read	https://dl.mitsubishielectric.com/dl/fa/document/manual/plc/sh080811eng/sh080811engx.pdf	Q-series built-in Ethernet port behaviour.
+SH(NA)-081264ENG	unknown	MELSEC iQ-R CPU Module User's Manual (Application)			not_obtained		Not downloaded. Holds the per-code detail for the iQ-R 4000H-4FFFH block. Until it is read those codes fall through to a generic CPU error; see A-IQR-CPU-CODES.

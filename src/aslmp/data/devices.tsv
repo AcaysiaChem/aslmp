@@ -1,0 +1,62 @@
+# The generic SLMP device table. Family-neutral: which of these a given CPU actually
+# HAS lives in ranges_iqf.tsv / ranges_iqr.tsv, and the iQ-F octal override for X and Y
+# lives in the profile, not here. `radix` is the DEFAULT radix of the device number as
+# SH(NA)-080956ENG documents it for iQ-R/Q/L.
+#
+# unit            bit | word. words_per_point is 2 for the long (dword) devices, so a
+#                 single LTN/LSTN/LCN/LZ point spans two words of response.
+# min_spec        short = reachable with subcommand 0000/0001 (1-byte code, 3-byte
+#                 number). long = only reachable with 0002/0003 (2-byte code, 4-byte
+#                 number), which an FX5U rejects outright with 0xC059 (measured).
+# code_short      the 1-byte binary device code. code_long is the 2-byte form.
+# ascii2/ascii4   the ASCII MNEMONIC, padded with '*' (0x2A). ASCII never sends the hex
+#                 of the code: D is "D*"/"D***", never "A8".
+# random_ok       false for the contacts and coils. FX5-SLMP p.78 says Read Random must
+#                 not be used with them and predicts CPU error 0x4032 -- but an
+#                 FX5U-32MT/DS fw 1.065 ACCEPTED a TS0 word point and answered 0x0000
+#                 with data. This column is therefore load-bearing client-side
+#                 validation, not a restatement of what the PLC will refuse.
+# batch_ok        false for the long timer / long retentive timer / long index devices,
+#                 which have no meaningful batch (word-unit) reading.
+name	long_name	unit	words_per_point	ascii2	ascii4	code_short	code_long	radix	min_spec	batch_ok	random_ok	monitor_ok	block_ok	provenance	cpu	firmware	measured	manual	revision	section	note
+SM	Special relay	bit	1	SM	SM**	0x91	0x0091	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	
+SD	Special register	word	1	SD	SD**	0xA9	0x00A9	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	SD203 carries the CPU operating status (0 RUN, 1 STEP-RUN, 2 STOP, 3 PAUSE) and is what verify=True reads back.
+X	Input	bit	1	X*	X***	0x9C	0x009C	hexadecimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Hexadecimal on iQ-R/Q/L. OCTAL on iQ-F, where the wire number is the LINEAR index of the octal literal (measured); the profile overrides the radix. See A-IQF-XY.
+Y	Output	bit	1	Y*	Y***	0x9D	0x009D	hexadecimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Hexadecimal on iQ-R/Q/L. OCTAL on iQ-F; GX Works3 Y20 goes on the wire as 16 (measured). See A-IQF-XY.
+M	Internal relay	bit	1	M*	M***	0x90	0x0090	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Local devices are not accessible over SLMP.
+L	Latch relay	bit	1	L*	L***	0x92	0x0092	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	
+F	Annunciator	bit	1	F*	F***	0x93	0x0093	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	
+V	Edge relay	bit	1	V*	V***	0x94	0x0094	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Local devices are not accessible. Absent on iQ-F: V0 returned 0xC05C on FX5U-32MT/DS fw 1.065.
+B	Link relay	bit	1	B*	B***	0xA0	0x00A0	hexadecimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	
+D	Data register	word	1	D*	D***	0xA8	0x00A8	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Local devices are not accessible.
+W	Link register	word	1	W*	W***	0xB4	0x00B4	hexadecimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	
+TS	Timer contact	bit	1	TS	TS**	0xC1	0x00C1	decimal	short	yes	no	no	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Not valid in Read Random / Write Random / monitor. Refused client-side: the FX5U answered a TS0 random point with 0x0000 instead of the documented 0x4032.
+TC	Timer coil	bit	1	TC	TC**	0xC0	0x00C0	decimal	short	yes	no	no	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Not valid in Read Random / Write Random / monitor.
+TN	Timer current value	word	1	TN	TN**	0xC2	0x00C2	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	
+LTS	Long timer contact	bit	1		LTS*		0x0051	decimal	long	no	no	no	no	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Subcommand 0002/0003 only. Absent on iQ-F.
+LTC	Long timer coil	bit	1		LTC*		0x0050	decimal	long	no	no	no	no	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Subcommand 0002/0003 only. Absent on iQ-F.
+LTN	Long timer current value	word	2		LTN*		0x0052	decimal	long	no	yes	yes	no	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Subcommand 0002/0003 only. Absent on iQ-F. One point is two words.
+STS	Retentive timer contact	bit	1	SS	STS*	0xC7	0x00C7	decimal	short	yes	no	no	yes	manual				SH(NA)-080008	AB	8.1 p.68	The two-character ASCII mnemonic is SS, not ST. Not valid in Read Random / Write Random / monitor.
+STC	Retentive timer coil	bit	1	SC	STC*	0xC6	0x00C6	decimal	short	yes	no	no	yes	manual				SH(NA)-080008	AB	8.1 p.68	The two-character ASCII mnemonic is SC. Not valid in Read Random / Write Random / monitor.
+STN	Retentive timer current value	word	1	SN	STN*	0xC8	0x00C8	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080008	AB	8.1 p.68	The two-character ASCII mnemonic is SN.
+LSTS	Long retentive timer contact	bit	1		LSTS		0x0059	decimal	long	no	no	no	no	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Subcommand 0002/0003 only. Absent on iQ-F.
+LSTC	Long retentive timer coil	bit	1		LSTC		0x0058	decimal	long	no	no	no	no	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Subcommand 0002/0003 only. Absent on iQ-F.
+LSTN	Long retentive timer current value	word	2		LSTN		0x005A	decimal	long	no	yes	yes	no	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Subcommand 0002/0003 only. Absent on iQ-F. One point is two words.
+CS	Counter contact	bit	1	CS	CS**	0xC4	0x00C4	decimal	short	yes	no	no	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Not valid in Read Random / Write Random / monitor.
+CC	Counter coil	bit	1	CC	CC**	0xC3	0x00C3	decimal	short	yes	no	no	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Not valid in Read Random / Write Random / monitor.
+CN	Counter current value	word	1	CN	CN**	0xC5	0x00C5	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	
+LCS	Long counter contact	bit	1		LCS*		0x0055	decimal	long	yes	no	no	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Subcommand 0002/0003 only. Present on iQ-F per the FX5 device-range table, but an FX5U rejects subcommand 0002 outright with 0xC059, so it is unreachable there.
+LCC	Long counter coil	bit	1		LCC*		0x0054	decimal	long	yes	no	no	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Subcommand 0002/0003 only. Unreachable on iQ-F, see LCS.
+LCN	Long counter current value	word	2		LCN*		0x0056	decimal	long	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Subcommand 0002/0003 only. One point is two words. Unreachable on iQ-F, see LCS.
+SB	Link special relay	bit	1	SB	SB**	0xA1	0x00A1	hexadecimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	
+SW	Link special register	word	1	SW	SW**	0xB5	0x00B5	hexadecimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	
+S	Step relay	bit	1	S*	S***	0x98	0x0098	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080008	AB	8.1 p.68	Read only in SH(NA)-080956ENG. Cited to SH(NA)-080008 because SH(NA)-080956ENG p.36 prints this row's two device-code columns swapped relative to every other row; see A-STEP-RELAY-COLUMNS.
+DX	Direct access input	bit	1	DX	DX**	0xA2	0x00A2	hexadecimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Absent on iQ-F: DX0 returned 0xC05C on FX5U-32MT/DS fw 1.065.
+DY	Direct access output	bit	1	DY	DY**	0xA3	0x00A3	hexadecimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Absent on iQ-F.
+Z	Index register	word	1	Z*	Z***	0xCC	0x00CC	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Local devices are not accessible.
+LZ	Long index register	word	2		LZ**		0x0062	decimal	long	no	yes	yes	no	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Subcommand 0002/0003 only. One point is two words.
+R	File register (block switching)	word	1	R*	R***	0xAF	0x00AF	decimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Present on iQ-F: R0 read returned 0x0000 on FX5U-32MT/DS fw 1.065. Defaults to zero points on iQ-R.
+ZR	File register (serial number access)	word	1	ZR	ZR**	0xB0	0x00B0	hexadecimal	short	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Radix disputed: SH(NA)-080956ENG and SH(NA)-080008 say hexadecimal, JY997D56001-K p.67 says decimal. We follow SH(NA)-080956ENG. See A-ZR-RADIX. Absent on iQ-F (0xC05C measured); defaults to zero points on iQ-R.
+RD	Refresh data register	word	1		RD**		0x002C	decimal	long	yes	yes	yes	yes	manual				SH(NA)-080956ENG	M	5.2 p.35-36	Subcommand 0002/0003 only.
+G	Module access device	word	1	G*	G***	0xAB	0x00AB	decimal	short	yes	yes	yes	yes	manual				JY997D56001	K	4.2 p.66-67	U[n]\G buffer memory. Requires the device-memory-extension subcommand (0x0080 bit) and a module I/O number, so it is not a plain device access. FX5 prints F9H where SH(NA)-080956ENG uses F8H for the extension specifier; see A-FX5-EXT-CODE.
+BL	SFC block device	bit	1	BL	BL**	0xDC	0x00DC	decimal	short	no	no	no	no	manual				JY997D56001	K	4.2 p.66-67	Listed as SLMP-incompatible (x) in the FX5 device table. Present here so that BL0 gets a typed refusal naming the reason instead of an unknown-device error.

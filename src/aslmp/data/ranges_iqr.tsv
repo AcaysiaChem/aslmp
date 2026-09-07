@@ -1,0 +1,91 @@
+# iQ-R device ranges, from the CPU startup manual's default parameter assignment.
+# Two profiles because the R00/R01/R02 and R04..R120 groups differ in X/Y/M.
+#
+# NOTHING in this file has been verified on hardware. We have never had an iQ-R.
+#
+# The R and ZR rows say zero points, and that is not a mistake: an out-of-the-box iQ-R
+# has no file register at all, so SH(NA)-080956ENG's own ZR16384 example fails on it.
+# The exception message has to say that rather than "address out of range".
+profile_key	device	present	first	last	points	radix	notation	configurable	provenance	cpu	firmware	measured	manual	revision	section	note
+melsec:iq-r/r00	X	yes	0	8191	8192	hexadecimal	X0 to X1FFF	no	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	Y	yes	0	8191	8192	hexadecimal	Y0 to Y1FFF	no	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	M	yes	0	8191	8192	decimal	M0 to M8191	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	B	yes	0	8191	8192	hexadecimal	B0 to B1FFF	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	SB	yes	0	2047	2048	hexadecimal	SB0 to SB7FF	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	F	yes	0	2047	2048	decimal	F0 to F2047	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	V	yes	0	2047	2048	decimal	V0 to V2047	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	L	yes	0	8191	8192	decimal	L0 to L8191	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	D	yes	0	18431	18432	decimal	D0 to D18431	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	W	yes	0	8191	8192	hexadecimal	W0 to W1FFF	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	SW	yes	0	2047	2048	hexadecimal	SW0 to SW7FF	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	SM	yes	0	4095	4096	decimal	SM0 to SM4095	no	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	SD	yes	0	4095	4096	decimal	SD0 to SD4095	no	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	TS	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	TC	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	TN	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	LTS	yes	0	1023	1024	decimal	LT0 to LT1023	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	LTC	yes	0	1023	1024	decimal	LT0 to LT1023	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	LTN	yes	0	1023	1024	decimal	LT0 to LT1023	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	CS	yes	0	511	512	decimal	C0 to C511	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	CC	yes	0	511	512	decimal	C0 to C511	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	CN	yes	0	511	512	decimal	C0 to C511	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	LCS	yes	0	511	512	decimal	LC0 to LC511	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	LCC	yes	0	511	512	decimal	LC0 to LC511	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	LCN	yes	0	511	512	decimal	LC0 to LC511	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r00	Z	yes	0	19	20	decimal	Z0 to Z19	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Default 20 points, maximum 24. Z and LZ share the index-register budget.
+melsec:iq-r/r00	LZ	yes	0	1	2	decimal	LZ0 to LZ1	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Default 2 points, maximum 12. One LZ point is two words.
+melsec:iq-r/r00	S	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Step relay: zero points unless an SFC program is configured.
+melsec:iq-r/r00	STS	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Retentive timer: zero points unless allocated in GX Works3.
+melsec:iq-r/r00	STC	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Retentive timer: zero points unless allocated in GX Works3.
+melsec:iq-r/r00	STN	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Retentive timer: zero points unless allocated in GX Works3.
+melsec:iq-r/r00	LSTS	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Long retentive timer: zero points unless allocated in GX Works3.
+melsec:iq-r/r00	LSTC	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Long retentive timer: zero points unless allocated in GX Works3.
+melsec:iq-r/r00	LSTN	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Long retentive timer: zero points unless allocated in GX Works3.
+melsec:iq-r/r00	R	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	File register: ZERO POINTS on an out-of-the-box iQ-R. SH(NA)-080956ENG's own ZR16384 example fails on a default CPU. Allocate file register capacity in GX Works3, then hand the real range to profile.with_ranges().
+melsec:iq-r/r00	ZR	yes			0	hexadecimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	File register (serial number access): ZERO POINTS by default, as for R. Radix disputed; see A-ZR-RADIX.
+melsec:iq-r/r00	DX	yes				decimal		yes	inferred				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	INFERRED: Direct access input. The iQ-R performance table does not list DX separately; it addresses the same I/O as X. No static range is validated for it.
+melsec:iq-r/r00	DY	yes				decimal		yes	inferred				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	INFERRED: Direct access output. The iQ-R performance table does not list DY separately; it addresses the same I/O as Y. No static range is validated for it.
+melsec:iq-r/r00	RD	yes				decimal		yes	inferred				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	INFERRED: Refresh data register. Size follows the module refresh setting, so there is no static range to validate. No static range is validated for it.
+melsec:iq-r/r00	G	yes				decimal		yes	inferred				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	INFERRED: Module access device U[n]\G. Depends on the mounted module. No static range is validated for it.
+melsec:iq-r/r00	BL	yes				decimal		yes	inferred				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	INFERRED: SFC block device. Depends on the SFC program. Marked SLMP-incompatible in the FX5 table; not established for iQ-R. No static range is validated for it.
+melsec:iq-r/r04	X	yes	0	12287	12288	hexadecimal	X0 to X2FFF	no	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	Y	yes	0	12287	12288	hexadecimal	Y0 to Y2FFF	no	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	M	yes	0	12287	12288	decimal	M0 to M12287	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	B	yes	0	8191	8192	hexadecimal	B0 to B1FFF	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	SB	yes	0	2047	2048	hexadecimal	SB0 to SB7FF	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	F	yes	0	2047	2048	decimal	F0 to F2047	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	V	yes	0	2047	2048	decimal	V0 to V2047	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	L	yes	0	8191	8192	decimal	L0 to L8191	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	D	yes	0	18431	18432	decimal	D0 to D18431	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	W	yes	0	8191	8192	hexadecimal	W0 to W1FFF	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	SW	yes	0	2047	2048	hexadecimal	SW0 to SW7FF	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	SM	yes	0	4095	4096	decimal	SM0 to SM4095	no	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	SD	yes	0	4095	4096	decimal	SD0 to SD4095	no	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	TS	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	TC	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	TN	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	LTS	yes	0	1023	1024	decimal	LT0 to LT1023	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	LTC	yes	0	1023	1024	decimal	LT0 to LT1023	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	LTN	yes	0	1023	1024	decimal	LT0 to LT1023	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	CS	yes	0	511	512	decimal	C0 to C511	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	CC	yes	0	511	512	decimal	C0 to C511	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	CN	yes	0	511	512	decimal	C0 to C511	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	LCS	yes	0	511	512	decimal	LC0 to LC511	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	LCC	yes	0	511	512	decimal	LC0 to LC511	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	LCN	yes	0	511	512	decimal	LC0 to LC511	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	
+melsec:iq-r/r04	Z	yes	0	19	20	decimal	Z0 to Z19	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Default 20 points, maximum 24. Z and LZ share the index-register budget.
+melsec:iq-r/r04	LZ	yes	0	1	2	decimal	LZ0 to LZ1	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Default 2 points, maximum 12. One LZ point is two words.
+melsec:iq-r/r04	S	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Step relay: zero points unless an SFC program is configured.
+melsec:iq-r/r04	STS	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Retentive timer: zero points unless allocated in GX Works3.
+melsec:iq-r/r04	STC	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Retentive timer: zero points unless allocated in GX Works3.
+melsec:iq-r/r04	STN	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Retentive timer: zero points unless allocated in GX Works3.
+melsec:iq-r/r04	LSTS	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Long retentive timer: zero points unless allocated in GX Works3.
+melsec:iq-r/r04	LSTC	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Long retentive timer: zero points unless allocated in GX Works3.
+melsec:iq-r/r04	LSTN	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	Long retentive timer: zero points unless allocated in GX Works3.
+melsec:iq-r/r04	R	yes			0	decimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	File register: ZERO POINTS on an out-of-the-box iQ-R. SH(NA)-080956ENG's own ZR16384 example fails on a default CPU. Allocate file register capacity in GX Works3, then hand the real range to profile.with_ranges().
+melsec:iq-r/r04	ZR	yes			0	hexadecimal	none by default	yes	manual				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	File register (serial number access): ZERO POINTS by default, as for R. Radix disputed; see A-ZR-RADIX.
+melsec:iq-r/r04	DX	yes				decimal		yes	inferred				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	INFERRED: Direct access input. The iQ-R performance table does not list DX separately; it addresses the same I/O as X. No static range is validated for it.
+melsec:iq-r/r04	DY	yes				decimal		yes	inferred				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	INFERRED: Direct access output. The iQ-R performance table does not list DY separately; it addresses the same I/O as Y. No static range is validated for it.
+melsec:iq-r/r04	RD	yes				decimal		yes	inferred				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	INFERRED: Refresh data register. Size follows the module refresh setting, so there is no static range to validate. No static range is validated for it.
+melsec:iq-r/r04	G	yes				decimal		yes	inferred				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	INFERRED: Module access device U[n]\G. Depends on the mounted module. No static range is validated for it.
+melsec:iq-r/r04	BL	yes				decimal		yes	inferred				SH(NA)-081263ENG	AA	2.1 Performance specifications, device points (p.47, p.49-50)	INFERRED: SFC block device. Depends on the SFC program. Marked SLMP-incompatible in the FX5 table; not established for iQ-R. No static range is validated for it.
