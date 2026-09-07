@@ -130,10 +130,19 @@ class Chunk:
     A zero-byte read is EOF, not a chunk: the transport classifies it (entry-busy on
     the first read of a generation, connection-lost otherwise) and never records it
     here. ``nbytes`` must therefore be positive.
+
+    ``partial`` is true when this ``recv`` returned FEWER bytes than the length-driven
+    read asked for -- that is, the message was split across TCP segments. It is what
+    :attr:`TransactionTiming.segmented` is computed from, and it is not the same
+    question as "was there more than one chunk": a stream response always takes at
+    least two reads by construction (the fixed prefix, then ``L`` units), so counting
+    chunks reports every TCP response as segmented and tells an operator nothing.
+    Always false on a datagram transport, where one datagram is one message.
     """
 
     nbytes: int
     at: Nanos
+    partial: bool = False
 
     def __post_init__(self) -> None:
         if self.nbytes <= 0:
@@ -237,8 +246,18 @@ class TransactionTiming:
 
     @property
     def segmented(self) -> bool:
-        """True when the response needed more than one ``recv`` (the 1460 B MSS case)."""
-        return len(self.chunks) > 1
+        """True when one length-driven read came back in pieces: the 1460 B MSS case.
+
+        Deliberately NOT ``len(self.chunks) > 1``. A stream response is read as the
+        fixed prefix and then exactly ``L`` more units, so it takes at least two
+        ``recv`` calls whatever the network does; counting chunks would flag 100% of
+        TCP responses and make :attr:`~aslmp.observability.Counters.segmented_responses`
+        unable to distinguish anything. Measured on FX5U-32MT/DS fw 1.065 (2026-09-06):
+        1 of 3 identical 1931-byte reads split at 1460 bytes, and on 2026-09-07 the
+        same read arrived as 9 + 1922 with neither read short -- one segment as far as
+        this process could tell.
+        """
+        return any(chunk.partial for chunk in self.chunks)
 
     @property
     def bytes_received(self) -> int:
@@ -400,11 +419,15 @@ class TimingBuilder:
         self._sent_at = self._stamp("sent_at", self._sent_at, self._encoded_at)
         return self._sent_at
 
-    def chunk(self, nbytes: int) -> Chunk:
+    def chunk(self, nbytes: int, *, partial: bool = False) -> Chunk:
         """Record one ``recv`` that returned ``nbytes``, stamped now.
 
         The first call fixes ``first_byte_at``; the last call fixes ``received_at``.
         Neither can be supplied by a caller.
+
+        ``partial`` says this read came back short of what it asked for, which is the
+        only honest evidence of a segment split; see :attr:`Chunk.partial`. A datagram
+        transport never passes it.
         """
         if self._sent_at is None:
             raise TimingOrderError("chunk() before sent().")
@@ -417,7 +440,7 @@ class TimingBuilder:
                 f"chunk at {now} precedes the previous stamp {previous}: the injected clock "
                 "is not monotonic."
             )
-        recorded = Chunk(nbytes, now)
+        recorded = Chunk(nbytes, now, partial)
         self._chunks.append(recorded)
         return recorded
 

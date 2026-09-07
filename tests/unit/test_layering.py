@@ -115,6 +115,12 @@ BANNED_AT_IMPORT = ("socket", "ssl", "asyncio", "selectors", "threading", "loggi
 PURE_MODULES: tuple[tuple[str, str, str], ...] = (
     ("aslmp.wire", "src/aslmp/wire/__init__.py", "U2"),
     ("aslmp.wire.citations", "src/aslmp/wire/citations.py", "U1"),
+    # wire/__init__.py is empty on purpose, so the row above imports no wire module at
+    # all and would pass with a socket in every one of them. These name the two modules
+    # that actually carry the bytes, so the failure points at the file to open.
+    ("aslmp.wire.codec", "src/aslmp/wire/codec.py", "U2"),
+    ("aslmp.wire.frames", "src/aslmp/wire/frames.py", "U2"),
+    ("aslmp.blocks.fields", "src/aslmp/blocks/fields.py", "U12"),
     ("aslmp.errors", "src/aslmp/errors/__init__.py", "U5"),
     ("aslmp.profile", "src/aslmp/profile.py", "U6"),
     ("aslmp.commands", "src/aslmp/commands/__init__.py", "U7"),

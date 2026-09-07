@@ -94,7 +94,7 @@ def trial_three() -> tuple[TransactionTiming, FakeClock]:
     clock.advance(100_000)
     builder.sent()
     clock.advance(10_964_000)
-    builder.chunk(1460)
+    builder.chunk(1460, partial=True)
     clock.advance(3_046_000)
     builder.chunk(471)
     clock.advance(50_000)
@@ -173,6 +173,30 @@ def test_segmented_flag_and_byte_count() -> None:
     assert [c.nbytes for c in timing.chunks] == [1460, 471]
 
 
+def test_more_than_one_chunk_is_not_by_itself_segmentation() -> None:
+    """The prefix-then-body pair is structural: every stream response has two chunks.
+
+    Counting chunks made ``Counters.segmented_responses`` fire on 100% of TCP
+    transactions, which is what a 960-word read against FX5U-32MT/DS fw 1.065 showed on
+    2026-09-07: chunks of 9 and 1922, neither read short, reported as segmented. Only a
+    read that came back SHORT of what it asked for is a segment split.
+    """
+    clock = FakeClock()
+    builder = TimingBuilder(clock)
+    builder.gate_acquired()
+    builder.encoded()
+    builder.sent()
+    clock.advance(9_000_000)
+    builder.chunk(9)  # the fixed prefix, complete
+    clock.advance(200_000)
+    builder.chunk(1922)  # exactly L, complete
+    builder.decoded()
+    timing = builder.build()
+    assert len(timing.chunks) == 2
+    assert timing.bytes_received == 1931
+    assert not timing.segmented
+
+
 def test_total_ns_covers_everything_the_caller_waited_for() -> None:
     timing, _ = trial_three()
     assert timing.send_ns == 100_000
@@ -196,7 +220,8 @@ def test_builder_exposes_no_parameter_that_could_carry_a_stamp() -> None:
         "gate_acquired": [],
         "encoded": [],
         "sent": [],
-        "chunk": ["nbytes"],
+        # ``partial`` is a fact about the read, not a stamp: it cannot carry a time.
+        "chunk": ["nbytes", "partial"],
         "decoded": [],
         "build": [],
     }

@@ -365,8 +365,13 @@ class Counters:
     bytes_received: int = 0
     chunks_received: int = 0
     segmented_responses: int = 0
-    """Responses that needed more than one ``recv``. Measured: 1 of 3 identical
-    1931-byte reads on FX5U-32MT/DS fw 1.065 split at the 1460-byte MSS."""
+    """Responses where a length-driven read came back SHORT of what it asked for.
+
+    Not "more than one chunk": a stream response is read as the fixed prefix and then
+    exactly ``L`` more units, so it always takes at least two ``recv`` calls and
+    counting chunks would report 100% of TCP transactions. Measured on FX5U-32MT/DS fw
+    1.065: 1 of 3 identical 1931-byte reads split at the 1460-byte MSS on 2026-09-06,
+    and 1 of 6 (as 9 + 1451 + 471) on 2026-09-07."""
 
     # the one-in-flight gate
     concurrent_rejections: int = 0
@@ -414,9 +419,8 @@ class Counters:
         self.transactions_started += 1
         self.bytes_sent += tx.request_bytes
         self.bytes_received += tx.response_bytes
-        chunks = len(tx.timing.chunks)
-        self.chunks_received += chunks
-        if chunks > 1:
+        self.chunks_received += len(tx.timing.chunks)
+        if tx.timing.segmented:
             self.segmented_responses += 1
         if tx.timing.is_complete:
             self.transactions_completed += 1

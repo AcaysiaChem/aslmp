@@ -90,9 +90,17 @@ BINARY = WireLabel("BINARY", "binary")
 TCP = WireLabel("TCP", "tcp")
 
 
-def a_timing(*, wire_ns: int, chunks: tuple[int, ...] = (11,), decode: bool = True) -> (
-    TransactionTiming
-):
+def a_timing(
+    *,
+    wire_ns: int,
+    chunks: tuple[int, ...] = (11,),
+    decode: bool = True,
+    split: bool = False,
+) -> TransactionTiming:
+    """``split`` marks the first read short, which is what segmentation actually is.
+
+    More than one chunk is NOT segmentation: the prefix-then-body pair is structural.
+    """
     clock = FakeClock()
     builder = TimingBuilder(clock)
     builder.gate_acquired()
@@ -102,7 +110,7 @@ def a_timing(*, wire_ns: int, chunks: tuple[int, ...] = (11,), decode: bool = Tr
     for index, nbytes in enumerate(chunks):
         step = wire_ns - per_chunk * (len(chunks) - 1) if index == 0 else per_chunk
         clock.advance(step)
-        builder.chunk(nbytes)
+        builder.chunk(nbytes, partial=split and index < len(chunks) - 1)
     if decode:
         builder.decoded()
     return builder.build()
@@ -488,9 +496,26 @@ def test_counters_start_at_zero_and_copy_detaches() -> None:
     assert counters.probes_skipped == 2
 
 
+def test_a_two_chunk_response_that_never_read_short_is_not_segmented() -> None:
+    """Regression: the counter fired on 100% of TCP transactions.
+
+    Every stream response is read as the fixed prefix and then exactly ``L`` more
+    units, so two chunks is the floor, not evidence. A 960-word read against
+    FX5U-32MT/DS fw 1.065 on 2026-09-07 arrived as 9 + 1922 five times out of six --
+    one MSS split, five whole -- and the old rule counted all six.
+    """
+    counters = Counters()
+    counters.observe(a_tx(a_timing(wire_ns=9_000_000, chunks=(9, 1922))))
+    assert counters.chunks_received == 2
+    assert counters.segmented_responses == 0
+
+    counters.observe(a_tx(a_timing(wire_ns=11_000_000, chunks=(9, 1451, 471), split=True)))
+    assert counters.segmented_responses == 1
+
+
 def test_counters_observe_folds_a_segmented_transaction() -> None:
     counters = Counters()
-    counters.observe(a_tx(a_timing(wire_ns=14_010_000, chunks=(1460, 471))))
+    counters.observe(a_tx(a_timing(wire_ns=14_010_000, chunks=(1460, 471), split=True)))
     counters.observe(a_tx(a_timing(wire_ns=10_169_000, chunks=(1931,))))
     counters.observe(a_tx(a_timing(wire_ns=1 * MS, decode=False), end_code=0))
     assert counters.transactions_started == 3
