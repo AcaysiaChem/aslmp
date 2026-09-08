@@ -24,13 +24,23 @@ event loop for its lifetime, and a command line with eleven subcommands behind o
 ## Read this before you trust a number in here
 
 **Our iron is one PLC.** A MELSEC iQ-F **FX5U-32MT/DS on firmware 1.065**, binary 3E and 4E,
-over TCP and UDP, on a Wi-Fi link, in September 2026. Everything this library claims about
-real silicon comes from that one CPU on those two afternoons.
+over TCP and UDP, in September 2026. Everything this library claims about real silicon comes
+from that one CPU. Latency figures are labelled with their link, because **the link changed a
+conclusion**: on Wi-Fi, UDP won the median and TCP won the tail, and that was the stated
+reason TCP is the default. It did not reproduce on wire, where UDP wins at every percentile.
+The default did not change; its justification did. See [`docs/hardware.md`](docs/hardware.md).
 
-**We have no iQ-R, no Q, no L, no ASCII connection, and no tested remote control.** Those
-paths are implemented, they are gated, and every one of them ships **labelled unverified**:
-in the profile as `Evidence(provenance=MANUAL)`, in the docstring, in `aslmp capabilities`,
-and in [`docs/unverified.md`](docs/unverified.md). The label is honest. It is not protection.
+**We have no iQ-R, no Q, no L, and no ASCII connection.** Those paths are implemented, they
+are gated, and every one of them ships **labelled unverified**: in the profile as
+`Evidence(provenance=MANUAL)`, in the docstring, in `aslmp capabilities`, and in
+[`docs/unverified.md`](docs/unverified.md). The label is honest. It is not protection.
+
+**Remote control is partly verified.** RUN, STOP and PAUSE have been driven against the real
+CPU and checked against its own free-running scan counter, not just against `SD203`. **Remote
+RESET has never been sent** and stays unverified. So does the behaviour that makes
+`verify=True` the default — Mitsubishi documents Remote RUN as returning end code `0x0000`
+with the switch in STOP while the CPU does not run, and we could not force that condition on
+a bench whose switch is in RUN. It remains a manual claim, and the library treats it as true.
 
 **The simulator is not evidence.** `aslmp.testing` reproduces our measurements and gives the
 unverified paths CI coverage — but it was written from the same manuals as the client and
@@ -120,6 +130,16 @@ Consequences you have to design around:
 - `aslmp` classifies this precisely: a non-blocking EOF check straight after connect, and a
   zero-byte read on the first transaction of a connection, both raise
   `SlmpConnectionEntryBusyError` rather than a generic timeout.
+
+**A second client is not the only way to get that error, and often not the likeliest one.** An
+entry your own client just closed is not instantly available to your next `connect()`: measured
+2026-09-07 on a wired link at 3.64 ms median RTT, a reconnect after a clean `close()` succeeded
+1/6 at a 0 ms gap and 6/6 from 2 ms out. Over Wi-Fi at ~7 ms RTT it never failed at all, so the
+gap you need depends on your link and a **faster** link should need more, not less. If you see
+this error with nothing else connected to the CPU, do not go hunting for a second client — settle
+a few milliseconds before retaking an entry you just released. Nothing in the library waits or
+retries on your behalf; the numbers, the conditions and what they do not prove are in
+[`docs/hardware.md`](docs/hardware.md) section 2.1.
 
 UDP has no such limit: the entry is bound to a peer *address*, not to a socket, and two UDP
 sockets from different source ports were served concurrently.
@@ -288,7 +308,9 @@ declares the record once, `bind()` validates every span and prebuilds the `0x040
 startup, and each cycle costs one transaction and one snapshot:
 
 ```python
-from aslmp import F32, U32, Plc, PlcBlock, plc_block
+from typing import Annotated
+
+from aslmp import F32, Plc, PlcBlock, plc_block
 
 @plc_block(base="D0")
 class LoopState(PlcBlock):
@@ -296,13 +318,88 @@ class LoopState(PlcBlock):
     process_value: F32     # D2/D3
     output:        F32     # D4/D5
     error:         F32     # D6/D7
-    scan:          U32     # D8/D9
+    scan: Annotated[float, F32(minimum=0.0, maximum=1.0e7)]   # D8/D9 — a REAL on this PLC
 
 async with Plc("192.168.10.250", 5002, profile="melsec:iq-f/fx5u") as plc:
     plan = plc.bind(LoopState)          # synchronous; no I/O; fails at startup, not in the loop
     state = await plan.read()           # one 0x0403
     print(state.setpoint, state.tx.timing.wire_ms)
 ```
+
+> **The declared type is a promise the wire cannot check.** D registers carry no type on
+> the wire: sixteen bits are sixteen bits. If you declare `scan: U32` against a register
+> the PLC writes as a `REAL`, the two registers decode to `1226168560` — a
+> plausible-looking integer that is really a float's bit pattern. The end code is
+> `0x0000`, because nothing failed.
+>
+> An earlier version of this example made exactly that mistake, and it is nastier than it
+> looks: IEEE-754 bit patterns rise monotonically for positive floats, so a counter
+> declared `U32` still *increases* every cycle and a naive "is it advancing?" check passes.
+> Ours did. The only visible symptom is the *rate*, and even that does not hold still: a
+> `+1.0` in the REAL moves the `U32` reading by one ulp-step, which is 16 at the 613775.0
+> we measured and halves each time the counter crosses a power of two (8 above 2²⁰, 4
+> above 2²¹). A wrong rate that drifts is harder to spot than a wrong rate that does not.
+>
+> Take the field types from the PLC program's own global labels, not from what the value
+> looks like. In GX Works3 that is **Label → Global Label**, the `Data Type` column. On
+> this rig all five are `FLOAT [Single Precision]`.
+
+### Plausibility bounds: the promise you make, kept
+
+`aslmp` will not guess a register's type and will not sniff whether a value *looks like* a
+float — nothing on the wire could support either, and a detector that half-worked would be
+worse than none. What it will do is hold a value to a range **you** declare:
+
+```python
+scan: Annotated[float, F32(minimum=0.0, maximum=1.0e7)]
+```
+
+Every numeric alias takes the same two keywords (`F32 F64 I32 U32 I16 U16 Word`), both are
+optional, and either end alone is a whole declaration. A field with no bounds behaves
+exactly as it always has: unbounded is the default, because this is a tool for people who
+know their process ranges and not a ceremony every field has to perform.
+
+The call goes in the **metadata position of an `Annotated`**, not in the default slot,
+because that is the position a type checker does not read as a call: `state.scan` stays
+exactly `float`, with no `cast` and no `# type: ignore` at any call site. A bound that
+cannot mean anything — a `minimum` above its `maximum`, a NaN end, a bound the field's own
+width cannot reach — is refused at class-definition time.
+
+A value outside its declared range raises
+[`SlmpImplausibleValueError`](src/aslmp/blocks/fields.py) rather than being returned. It is
+a `SlmpSemanticError`, which in this library's error tree means precisely *the PLC said
+`0x0000` and the answer is still not one you can use*, and it carries the field, the
+bounds, the value, the address and the raw registers.
+
+Declared `Annotated[int, U32(minimum=0, maximum=1_000_000)]`, the reviewer's field says
+this and stops, instead of returning a counter that rises at the wrong rate:
+
+```
+scan read 1226168560 from D8, which is outside the declared range [0 .. 1000000]. The end
+code was 0x0000 and the registers on the wire were 0xD8F0 0x4915, so nothing failed and
+nothing was retried. A D register carries no type on the wire -- sixteen bits are sixteen
+bits -- so nothing here can tell a wrong declaration from a wrong process value, and nothing
+here guesses. The common cause is a declared type that disagrees with the PLC program's own
+global label: an f32 read as U32 returns a large integer that is really the float's bit
+pattern, and because IEEE-754 patterns rise monotonically for positive floats it even keeps
+counting up. Check the type in GX Works3 under Label -> Global Label, in the Data Type
+column, and declare what it says there. If the declaration is right and the plant really did
+go there, the bound is what you asked for.
+```
+
+Bounds are checked on writes too, before a byte leaves the process: `plan.write(scan=-1.0)`
+raises `SlmpValueRangeError` and sends nothing. Nothing is ever clamped to fit.
+`plan.describe()` prints each field's range beside its type, since that report is the
+artifact you hand a Mitsubishi engineer next to the `Global Label` view.
+
+The same promise is available per call, without a block:
+
+```python
+level = await plc.read_f32("D20", minimum=0.0, maximum=100.0)
+```
+
+on `read_i16`, `read_u16`, `read_i32`, `read_u32`, `read_f32` and `read_f64`, on
+`plc.timed`, and on the synchronous facade.
 
 The static type of `state.setpoint` is exactly `float` — the `Annotated` aliases carry the width
 in metadata, so there is no `cast` at the call site. `plc.read_block(plan)` and

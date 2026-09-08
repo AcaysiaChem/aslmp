@@ -78,10 +78,16 @@ if TYPE_CHECKING:
         BlockTransaction as BlockTransaction,
     )
     from aslmp.blocks import (
+        Bounds as Bounds,
+    )
+    from aslmp.blocks import (
         FieldPlan as FieldPlan,
     )
     from aslmp.blocks import (
         PlcBlock as PlcBlock,
+    )
+    from aslmp.blocks import (
+        SlmpImplausibleValueError as SlmpImplausibleValueError,
     )
     from aslmp.blocks import (
         Split as Split,
@@ -758,6 +764,15 @@ _EXPORTS: Final[dict[str, str]] = {
     "PlcBlock": "aslmp.blocks",
     "BlockTransaction": "aslmp.blocks",
     "BlockTiming": "aslmp.blocks",
+    # Plausibility bounds. ``SlmpImplausibleValueError`` is raised by a bounded read and
+    # documented in the README, so it has to be catchable without a second, deeper
+    # import; ``Bounds`` is the type of its ``.bounds`` attribute, which a
+    # ``mypy --strict`` handler cannot annotate otherwise. Both still live in
+    # ``aslmp.blocks.fields`` -- the error belongs in the DESIGN section 3.1 tree in
+    # ``aslmp/errors/__init__.py`` and should move there when that module is next
+    # opened, which is a one-line change to the row below and none for a caller.
+    "SlmpImplausibleValueError": "aslmp.blocks",
+    "Bounds": "aslmp.blocks",
     # -- supervision, entries, cadence, health -------------------------------------------
     "HealthMonitor": "aslmp.health",
     "HealthSnapshot": "aslmp.health",

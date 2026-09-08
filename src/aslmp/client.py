@@ -51,6 +51,7 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import TYPE_CHECKING, ClassVar, Final, Literal, Self, TypeVar, final, overload
 
+from aslmp.blocks.fields import check_reading
 from aslmp.commands.base import (
     AddressLike,
     Command,
@@ -160,15 +161,41 @@ HANDSHAKE_LATENCY: Final = Measurement(
 TRANSPORT_CHOICE: Final = Measurement(
     cpu="FX5U-32MT/DS",
     firmware="1.065",
-    date="2026-09-06",
+    date="2026-09-07",
     note=(
-        "UDP wins the median (p50 6.20 ms against 7.41 ms) and TCP wins the tail (p99 "
-        "10.49 ms against 13.80 ms, stdev 1.03 against 1.79). For a control loop jitter "
-        "matters more than the mean, so TransportKind.TCP is the declared default -- a "
-        "constant the caller overrides, never a probe."
+        "TCP is the default for CONFIGURABILITY, not for speed. On a wired link UDP is "
+        "faster at every percentile (p50 2.42 against 3.63 ms, p90 3.40 against 4.05, "
+        "p99 3.56 against 4.69, stdev 0.40 against 0.36, n=300 each, control drift 0.01 "
+        "ms). An earlier Wi-Fi measurement showed TCP winning the tail and that was a "
+        "property of the radio, not of the protocol: it did not survive a wired retest. "
+        "TCP is still the default because a UDP SLMP connection entry on iQ-F is "
+        "POINT-TO-POINT -- GX Works3 refuses to save one without a destination IP -- so "
+        "UDP only works if somebody configured an entry for your host, out of a maximum "
+        "of eight. A TCP entry serves any peer. Loss is also silent on UDP. Where an "
+        "entry exists and the link is wired, prefer UDP explicitly and knowingly."
     ),
 )
-"""Why ``transport`` defaults to TCP."""
+"""Why ``transport`` defaults to TCP. Not latency -- see the note, which was corrected
+after the Wi-Fi measurement it originally rested on failed to reproduce on wire."""
+
+REMOTE_SETTLE_SECONDS: Final = 0.25
+"""How long :meth:`RemoteControl.run` and friends will keep OBSERVING SD203.
+
+Not a retry budget: the remote-control command is sent exactly once and is never re-sent.
+What repeats is the reading, because the CPU changes state asynchronously.
+
+Measured on FX5U-32MT/DS fw 1.065, 2026-09-07, three stop/run cycles. Leaving RUN is
+effectively synchronous -- SD203 reported STOP on the first poll 3 times out of 3, about
+18-21 ms after the command. Entering RUN is not: SD203 still reported STOP on the first
+poll in 2 cycles out of 3 and only reached RUN on the second, 25-33 ms after the command.
+A single immediate read therefore reports a false negative for RUN roughly two thirds of
+the time, which would make ``verify=True`` -- the safety default -- unusable. 250 ms is an
+order of magnitude above the worst transition seen, and it is a ceiling, not a wait: the
+loop returns the moment the state matches.
+"""
+
+REMOTE_POLL_INTERVAL_SECONDS: Final = 0.005
+"""Gap between SD203 observations while a remote state change settles."""
 
 
 def mirrored(function: F) -> F:
@@ -1176,57 +1203,167 @@ class Plc:
         return self._done(values[0], tx)
 
     @mirrored
-    async def read_i16(self, address: AddressLike, /) -> int:
-        """One register as a signed 16-bit integer."""
+    async def read_i16(
+        self,
+        address: AddressLike,
+        /,
+        *,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> int:
+        """One register as a signed 16-bit integer.
+
+        ``minimum``/``maximum`` are the per-call form of a block field's declared bounds:
+        a promise **you** make about what may be in that register, enforced on the value
+        that comes back. See :meth:`read_f32`, which is where the promise earns its keep.
+        """
         words, tx = await self._run(ReadWords(address, 1), mutates=False)
-        return self._done(signed(words[0], bits=16), tx)
+        value = signed(words[0], bits=16)
+        check_reading(
+            value,
+            minimum,
+            maximum,
+            field="read_i16",
+            address=address,
+            registers=words,
+            client=self,
+        )
+        return self._done(value, tx)
 
     @mirrored
-    async def read_u16(self, address: AddressLike, /) -> int:
+    async def read_u16(
+        self,
+        address: AddressLike,
+        /,
+        *,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> int:
         """One register as an unsigned 16-bit integer."""
         words, tx = await self._run(ReadWords(address, 1), mutates=False)
+        check_reading(
+            words[0],
+            minimum,
+            maximum,
+            field="read_u16",
+            address=address,
+            registers=words,
+            client=self,
+        )
         return self._done(words[0], tx)
 
     @mirrored
     async def read_i32(
-        self, address: AddressLike, /, *, word_order: WordOrder | None = None
+        self,
+        address: AddressLike,
+        /,
+        *,
+        word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> int:
         """Two consecutive registers as a signed 32-bit integer."""
         words, tx = await self._run(ReadWords(address, 2), mutates=False)
         raw = _from_words(words, self._order(word_order))
-        return self._done(int(struct.unpack("<i", raw)[0]), tx)
+        value = int(struct.unpack("<i", raw)[0])
+        check_reading(
+            value,
+            minimum,
+            maximum,
+            field="read_i32",
+            address=address,
+            registers=words,
+            client=self,
+        )
+        return self._done(value, tx)
 
     @mirrored
     async def read_u32(
-        self, address: AddressLike, /, *, word_order: WordOrder | None = None
+        self,
+        address: AddressLike,
+        /,
+        *,
+        word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> int:
         """Two consecutive registers as an unsigned 32-bit integer."""
         words, tx = await self._run(ReadWords(address, 2), mutates=False)
         raw = _from_words(words, self._order(word_order))
-        return self._done(int(struct.unpack("<I", raw)[0]), tx)
+        value = int(struct.unpack("<I", raw)[0])
+        check_reading(
+            value,
+            minimum,
+            maximum,
+            field="read_u32",
+            address=address,
+            registers=words,
+            client=self,
+        )
+        return self._done(value, tx)
 
     @mirrored
     async def read_f32(
-        self, address: AddressLike, /, *, word_order: WordOrder | None = None
+        self,
+        address: AddressLike,
+        /,
+        *,
+        word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> float:
         """Two consecutive registers as one IEEE-754 single.
 
         Low word first, measured four ways on FX5U-32MT/DS fw 1.065: 1234.5 written as
         one double-word point put ``00 50 9A 44`` on the wire and read back
         ``D104 = 0x5000``, ``D105 = 0x449A`` (2026-09-06).
+
+        ``minimum`` and ``maximum`` are optional plausibility bounds. A D register
+        carries no type on the wire, so the *width* you ask for is never wrong and the
+        *meaning* can be: two registers a PLC program writes as a ``REAL``, read here as
+        a ``u32``, are a large plausible integer with end code ``0x0000``. This library
+        will not guess which of the two it is looking at, and it will not sniff the
+        bytes; it will hold the value to a range you declare and raise
+        :class:`~aslmp.blocks.fields.SlmpImplausibleValueError` if it is outside.
         """
         words, tx = await self._run(ReadWords(address, 2), mutates=False)
         raw = _from_words(words, self._order(word_order))
-        return self._done(float(struct.unpack("<f", raw)[0]), tx)
+        value = float(struct.unpack("<f", raw)[0])
+        check_reading(
+            value,
+            minimum,
+            maximum,
+            field="read_f32",
+            address=address,
+            registers=words,
+            client=self,
+        )
+        return self._done(value, tx)
 
     @mirrored
     async def read_f64(
-        self, address: AddressLike, /, *, word_order: WordOrder | None = None
+        self,
+        address: AddressLike,
+        /,
+        *,
+        word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> float:
         """Four consecutive registers as one IEEE-754 double."""
         words, tx = await self._run(ReadWords(address, 4), mutates=False)
         raw = _from_words(words, self._order(word_order))
-        return self._done(float(struct.unpack("<d", raw)[0]), tx)
+        value = float(struct.unpack("<d", raw)[0])
+        check_reading(
+            value,
+            minimum,
+            maximum,
+            field="read_f64",
+            address=address,
+            registers=words,
+            client=self,
+        )
+        return self._done(value, tx)
 
     @mirrored
     async def read_str(
@@ -1787,22 +1924,38 @@ class RemoteControl:
         mode: RunMode = RunMode.NOT_FORCED,
         clear: ClearMode = ClearMode.NONE,
         verify: bool = True,
+        settle: float | None = None,
     ) -> CpuStatus:
-        """``1001`` Remote RUN, then SD203 unless ``verify=False``."""
+        """``1001`` Remote RUN, then SD203 until it agrees, unless ``verify=False``.
+
+        Entering RUN is not instantaneous: measured on FX5U-32MT/DS fw 1.065, SD203 still
+        reported STOP on the first poll in two cycles out of three. ``settle`` bounds how
+        long the status is observed (default :data:`REMOTE_SETTLE_SECONDS`); the command
+        itself is sent once and never re-sent.
+        """
         return await self._apply(
-            RemoteRun(mode=mode, clear=clear), CpuStatus.RUN, verify, "remote.run()"
+            RemoteRun(mode=mode, clear=clear), CpuStatus.RUN, verify, "remote.run()", settle
         )
 
-    async def stop(self, *, verify: bool = True) -> CpuStatus:
-        """``1002`` Remote STOP, then SD203 unless ``verify=False``."""
-        return await self._apply(RemoteStop(), CpuStatus.STOP, verify, "remote.stop()")
+    async def stop(self, *, verify: bool = True, settle: float | None = None) -> CpuStatus:
+        """``1002`` Remote STOP, then SD203 unless ``verify=False``.
+
+        Leaving RUN was synchronous in every cycle measured, so this rarely polls twice.
+        """
+        return await self._apply(
+            RemoteStop(), CpuStatus.STOP, verify, "remote.stop()", settle
+        )
 
     async def pause(
-        self, *, mode: RunMode = RunMode.NOT_FORCED, verify: bool = True
+        self,
+        *,
+        mode: RunMode = RunMode.NOT_FORCED,
+        verify: bool = True,
+        settle: float | None = None,
     ) -> CpuStatus:
         """``1003`` Remote PAUSE, then SD203 unless ``verify=False``."""
         return await self._apply(
-            RemotePause(mode=mode), CpuStatus.PAUSE, verify, "remote.pause()"
+            RemotePause(mode=mode), CpuStatus.PAUSE, verify, "remote.pause()", settle
         )
 
     async def latch_clear(self) -> None:
@@ -1839,23 +1992,54 @@ class RemoteControl:
         await self._plc._run(LockPassword(password), mutates=True)
 
     async def _apply(
-        self, command: Command[None], wanted: CpuStatus, verify: bool, what: str
+        self,
+        command: Command[None],
+        wanted: CpuStatus,
+        verify: bool,
+        what: str,
+        settle: float | None = None,
     ) -> CpuStatus:
         plc = self._plc
         _nothing, tx = await plc._run(command, mutates=True)
         if not verify:
             self._last = RemoteResult(what, None, False, tx)
             return wanted
-        words, verify_tx = await plc._run(cpu_status_command(), mutates=False)
-        actual = decode_cpu_status(words)
-        self._last = RemoteResult(what, actual, True, tx, verify_tx)
+
+        # Poll SD203 to a bounded deadline rather than reading it once.
+        #
+        # This is NOT a retry and NOT silent recovery: the command is sent exactly once and
+        # is never re-sent. What is repeated is the *observation*, because the CPU changes
+        # state asynchronously and a single immediate read reports a state that has not
+        # settled yet. Concluding "it did not work" from that read would be as wrong as
+        # trusting the end code, in the opposite direction.
+        #
+        # Measured on FX5U-32MT/DS fw 1.065, 2026-09-07, three cycles: STOP is reported
+        # correctly on the FIRST poll every time (~18-21 ms after the command), but RUN
+        # still reported STOP on the first poll in 2 of 3 cycles and only reached RUN on
+        # the second, 25-33 ms after the command. The asymmetry is real: entering RUN takes
+        # the CPU an extra scan or two, leaving it does not.
+        deadline_s = REMOTE_SETTLE_SECONDS if settle is None else settle
+        deadline = time.monotonic() + deadline_s
+        polls = 0
+        while True:
+            words, verify_tx = await plc._run(cpu_status_command(), mutates=False)
+            actual = decode_cpu_status(words)
+            polls += 1
+            if actual is wanted or time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(REMOTE_POLL_INTERVAL_SECONDS)
+
+        self._last = RemoteResult(what, actual, True, tx, verify_tx, polls=polls)
         if actual is not wanted:
             raise SlmpRemoteStateNotReachedError(
-                f"{what} was answered end code 0x0000 and SD203 then reported {actual}, "
-                f"not {wanted}. Mitsubishi documents Remote RUN with the switch in STOP "
-                f"as completing normally while the access destination does not enter the "
-                f"RUN state (SH(NA)-080956ENG-M p.131), so the end code is not evidence "
-                f"and this library does not report it as one.",
+                f"{what} was answered end code 0x0000, but SD203 still reported {actual} "
+                f"and not {wanted} after {polls} poll(s) over {deadline_s * 1000:.0f} ms. "
+                f"Mitsubishi documents Remote RUN with the switch in STOP as completing "
+                f"normally while the access destination does not enter the RUN state "
+                f"(SH(NA)-080956ENG-M p.131), so the end code is not evidence and this "
+                f"library does not report it as one. Check the RUN/STOP switch position "
+                f"first. If the CPU does reach {wanted} slightly later, this deadline is "
+                f"too short for it: pass settle= to widen it.",
                 requested=str(wanted),
                 actual=str(actual),
                 diagnostics=Diagnostics(client=plc, tx=verify_tx),

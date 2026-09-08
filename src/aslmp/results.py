@@ -347,6 +347,14 @@ class RemoteResult:
     verified: bool
     tx: Transaction
     verify_tx: Transaction | None = None
+    polls: int = 0
+    """How many times SD203 was read before it agreed, or the deadline expired.
+
+    Repeated *observation*, never a repeated command. Entering RUN takes the CPU an extra
+    scan or two -- measured on FX5U-32MT/DS fw 1.065, SD203 still said STOP on the first
+    poll in two cycles of three -- so a value above 1 here is normal for ``run()`` and
+    would be unusual for ``stop()``.
+    """
 
     def __str__(self) -> str:
         if not self.verified:

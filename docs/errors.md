@@ -96,7 +96,7 @@ that never come, which is indistinguishable from a dead PLC by any other means.
 
 | exception | what happened | what to do |
 | --- | --- | --- |
-| `SlmpConnectionEntryBusyError` | the entry already has its one TCP connection | use a different entry, or find who holds it. Do not retry: it will not free up because you asked twice |
+| `SlmpConnectionEntryBusyError` | either the entry already has its one TCP connection, or **you are reconnecting into your own `close()`** | with nothing else connected it is the second: settle ~5 ms before retaking an entry you just released ([`hardware.md` 2.1](hardware.md#21-a-reconnect-within-about-2-ms-of-your-own-close-can-be-refused)). Otherwise use a different entry. Either way do not retry: neither cause is fixed by asking twice |
 | `SlmpTimeoutError` with `CODING_MISMATCH` first | almost always `--encoding` / `Encoding` wrong | check `Communication Data Code` in the Own Node Settings; it is port-wide |
 | `SlmpConcurrentTransactionError` | two requests in flight on one TCP connection | that is the gate working. Serialise, or use a second connection entry |
 | `SlmpProfileMismatchError` | the CPU's model code is not in the declared profile | run `aslmp identify` and pass what it prints |

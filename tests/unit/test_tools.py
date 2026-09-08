@@ -173,10 +173,23 @@ def test_every_exception_a_public_api_raises_is_catchable_from_the_root() -> Non
 
     ``Cadence`` was exported and the error it raises was not, so the documented
     ``except SlmpCadenceOverrunError`` needed a second, deeper import to compile.
+
+    ``aslmp.blocks.fields`` is on the list for the same reason and it rotted the same
+    way: ``SlmpImplausibleValueError`` is what a bounded field raises and what the
+    README tells a caller to catch, and it was reachable only as
+    ``aslmp.blocks.fields.SlmpImplausibleValueError``. The two exceptions that live
+    outside ``aslmp/errors`` are exactly the ones this test has to name explicitly, so
+    it names them.
     """
     root = set(aslmp.__all__)
     gap: list[str] = []
-    for module_name in ("aslmp.errors", "aslmp.loop", "aslmp.health", "aslmp.resilience"):
+    for module_name in (
+        "aslmp.errors",
+        "aslmp.loop",
+        "aslmp.health",
+        "aslmp.resilience",
+        "aslmp.blocks.fields",
+    ):
         module = importlib.import_module(module_name)
         gap += [
             f"{module_name}.{name}"
@@ -245,6 +258,39 @@ def test_help_imports_neither_asyncio_nor_socket() -> None:
     assert not leaked, (
         f"`aslmp --help` imported [{leaked}]. Subcommands are imported lazily, one per "
         f"invocation, and the top-level help is a table of strings for this reason."
+    )
+
+
+def test_python_dash_m_aslmp_help_is_the_same_and_costs_the_same() -> None:
+    """``python -m aslmp --help`` is the spelling reached for when the script is not on PATH.
+
+    A strictly stronger claim than the test above, and the one ``aslmp/__main__.py``'s
+    docstring makes: ``runpy`` imports the ``aslmp`` package **before** it runs
+    ``aslmp/__main__.py``, so this exercises the lazy re-export table in
+    ``aslmp/__init__.py`` as well as the subcommand table. Calling
+    ``aslmp.tools.__main__.main`` directly skips the package facade entirely, so an
+    eager import added there would pass that test and fail this one.
+    """
+    report = probe(
+        "import runpy, sys, io, contextlib\n"
+        "sys.argv = ['aslmp', '--help']\n"
+        "out = io.StringIO()\n"
+        "try:\n"
+        "    with contextlib.redirect_stdout(out):\n"
+        "        runpy.run_module('aslmp', run_name='__main__')\n"
+        "except SystemExit as exc:\n"
+        "    code = exc.code\n"
+        "else:\n"
+        "    code = 0\n"
+        f"leaked = ','.join(n for n in {FORBIDDEN_MODULES!r} if n in sys.modules)\n"
+        "print(repr((code, leaked, 'capabilities' in out.getvalue())))\n"
+    )
+    code, leaked, listed_a_subcommand = ast.literal_eval(report)
+    assert code in (0, None), f"`python -m aslmp --help` exited {code!r}"
+    assert listed_a_subcommand, "`python -m aslmp --help` printed no subcommand table"
+    assert not leaked, (
+        f"`python -m aslmp --help` imported [{leaked}]. aslmp/__main__.py delegates and "
+        f"does nothing else; the cost came from aslmp/__init__.py or the subcommand table."
     )
 
 
