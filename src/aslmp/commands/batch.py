@@ -4,8 +4,9 @@ Layer 2. One head device, one point count, one contiguous run. The cheapest way 
 a lot of registers and the wrong way to sample three separate ones: three ``0401`` round
 trips cost 21.8 ms at p50 against 7.2 ms for one ``0403`` carrying the same three values,
 and worse, they sample the plant at three moments up to 27 ms apart (FX5U-32MT/DS fw
-1.065, n=200 each, interleaved, 2026-09-06). Batch is for runs; ``commands/random.py``
-is for the control loop.
+1.065, n=200 each, interleaved, 2026-09-06, from the laptop at 192.168.10.41 over Wi-Fi
+at ~7 ms median RTT). The ratio is the claim, not the milliseconds: on a wired link both
+sides move together. Batch is for runs; ``commands/random.py`` is for the control loop.
 
 **The point ceilings are per-CPU, per-coding, per-link and measured, not generic.** An
 FX5U-32MT/DS on firmware 1.065 was binary-searched to 960 word points (961 ->

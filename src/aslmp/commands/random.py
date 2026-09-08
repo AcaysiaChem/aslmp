@@ -5,7 +5,8 @@ Layer 2. This is the module the rest of the library exists to serve.
 **Why it matters, measured.** Reading three floats as three ``0401`` batch reads costs
 21.8 ms at p50 against 7.2 ms for one ``0403`` carrying all three -- 3.04x at p50, 4.08x
 at p99, and 4.1x less jitter (stdev 1.27 ms against 5.22 ms; FX5U-32MT/DS fw 1.065,
-n=200 each, interleaved, 2026-09-06). The latency is the smaller half of the argument.
+n=200 each, interleaved, 2026-09-06, from the laptop at 192.168.10.41 over Wi-Fi at
+~7 ms median RTT). The latency is the smaller half of the argument.
 Three separate reads sample the plant at three moments **up to 27 ms apart**; one
 ``0403`` returns one consistent snapshot. For a control loop that is a correctness
 property, not a performance one.

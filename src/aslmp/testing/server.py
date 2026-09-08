@@ -430,7 +430,14 @@ class PlcSimulator:
     def _frame_for(self, entry: Entry, data: bytes) -> FrameFormat | None:
         """Which frame format this message is, or ``None`` if it is neither.
 
-        An FX5U-32MT/DS accepts a 4E frame on a connection entry configured for 3E
+        Two independent questions, and they were one until 2026-09-07. **Does this CPU
+        family speak the format at all** is
+        :meth:`~aslmp.testing.targets.SimulatorTarget.serves_frame`, and a format it does
+        not speak is not recognised on any entry -- ``None`` here, which the caller turns
+        into the same silence or ``0xC06F`` any unrecognised subheader gets. **Is the
+        format allowed on *this* entry** is
+        :attr:`~aslmp.testing.pathology.Pathology.accept_4e_on_3e_entry`: an
+        FX5U-32MT/DS accepts a 4E frame on a connection entry configured for 3E
         (measured 2026-09-06), against two Mitsubishi manuals, so that is a switch and
         not a constant.
         """
@@ -438,13 +445,13 @@ class PlcSimulator:
         configured = entry.frame_format
         head = configured.request.for_codec(codec)
         if data[: len(head)] == head:
-            return configured
+            return configured if self.target.serves_frame(configured.frame_type) else None
         if not self._pathology.accept_4e_on_3e_entry:
             return None
         other = FOUR_E if configured is THREE_E else THREE_E
         other_head = other.request.for_codec(codec)
         if data[: len(other_head)] == other_head:
-            return other
+            return other if self.target.serves_frame(other.frame_type) else None
         return None
 
     def _peek(

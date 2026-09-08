@@ -169,8 +169,9 @@ def test_the_bench_scan_counter_wraps_where_the_plc_program_wraps(
     """``IF IO_Scan > 1.0E7`` is one line of the CPU's own ST, so it is one line here.
 
     Only the threshold is measured. The value the counter resumes from was never seen on
-    a wire -- 1.0e7 counts at 1018 scans/s is about 2.7 hours -- so this asserts that it
-    dropped below the threshold and not what it dropped to.
+    a wire -- 1.0e7 counts at the idle 1018 scans/s of ``docs/hardware.md`` section 17 is
+    about 2.7 hours -- so this asserts that it dropped below the threshold and not what
+    it dropped to.
     """
     memory.set_f32("D", 8, BENCH_SCAN_WRAP - BENCH_SCAN_STEP)
     assert memory.bump_f32("D", 8) == BENCH_SCAN_WRAP

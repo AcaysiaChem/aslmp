@@ -3,7 +3,8 @@
 The load-bearing assertion in this file is an **absence**. DESIGN.md graft G7 removed
 ``EntryBank.lease()`` because a connection entry is not fungible capacity: our own six
 are four TCP and two UDP, and UDP on FX5U-32MT/DS fw 1.065 has both a different latency
-distribution (p50 2.42 ms against 3.63 ms, wired, 2026-09-07) and a different failure mode
+distribution (p50 2.42 ms against 3.63 ms, 2026-09-07 from ``argus-bench`` over the wired
+link) and a different failure mode
 (a lost datagram with no end code and no ICMP). A UDP entry is also point-to-point, so it
 is not even reachable from the same hosts. A group that chose an entry for the caller
 would move a read between those two silently, and the only trace would be a latency number

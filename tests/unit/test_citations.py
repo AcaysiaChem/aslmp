@@ -10,13 +10,23 @@ firmware version. These tests force *presence* and *shape*; they cannot force tr
 which is stated plainly as a residual weakness in DESIGN section 7.
 
 The third arrived on 2026-09-07 and is at the bottom of this file: the numbers this
-repository publishes in **prose**. A measurement in a TSV has a schema and a test; the
-same measurement in a README has neither, which is why both claims this project has had
-to withdraw were prose, and why one scan rate reached four files and three different
-values before anyone noticed. Those tests derive one figure from the one row that
-measured it and hold every other appearance of it against that -- so a document cannot
-disagree with itself, and a sibling left behind fails the suite rather than waiting for
-the next review.
+repository publishes in **prose** -- in a README, a docstring, a comment, anywhere a
+reader meets a figure that no schema is holding. A measurement in a TSV has a schema and
+a test; the same measurement in a README has neither, which is why both claims this
+project has had to withdraw were prose, and why one scan rate reached four files and
+three different values before anyone noticed. Those tests derive one figure from the one
+row that measured it and hold every other appearance of it against that -- so a document
+cannot disagree with itself, and a sibling left behind fails the suite rather than
+waiting for the next review.
+
+Those rules walked prose only, or prose and the package, depending on which of them you
+read; they were written in one pass by one hand and three of them stopped in different
+places. They now all walk :func:`all_sources` -- every Markdown document and every
+Python file in the repository -- and
+:func:`test_every_rule_in_this_section_walks_the_whole_tree` fails if one of them starts
+walking something narrower again. That test is the point of the pass that added it: the
+recurring defect in this repository is not the wrong number, it is the right fix applied
+to one of the places that has it.
 """
 
 from __future__ import annotations
@@ -911,9 +921,14 @@ def test_unverified_md_still_says_which_profile_is_the_measured_one() -> None:
 # The rule these enforce: a measured quantity has ONE source, every other appearance of
 # it is derived from that source or cites it, and a figure that names no conditions is
 # not a measurement.
+#
+# Every rule below takes its files from all_sources() and there is no second way to get
+# them, because the last defect this section had was a rule that took its files from
+# somewhere narrower than the rule beside it.
 
 REPO = Path(__file__).resolve().parents[2]
 HARDWARE_MD = REPO / "docs" / "hardware.md"
+BENCHMARKING_MD = REPO / "docs" / "benchmarking.md"
 
 IDLE_SCAN_ROW = re.compile(
     r"^\|\s*20 s\s*\|\s*\*\*([\d,]+)\*\*\s*\|\s*([\d.]+)\s*\|\s*\*\*([\d.]+)\*\*\s*\|",
@@ -930,7 +945,13 @@ SCAN_FIGURE = re.compile(
     r"(?<![\w.])(\d{3,4}(?:\.\d+)?)(?!\d)"
     r"(?:\s*(?:\w+\s+){0,2}(?:scans?|counts?)\s*/\s*s|\s*/\s*s)(?![\w/])"
 )
-"""A scan rate written out: ``1018 scans/s``, ``969/s``, ``1018 real counts/s``.
+"""A scan rate written out: ``1018 scans/s``, ``969/s`` against ``1029/s``, ``1018 real
+counts/s``.
+
+The loaded/idle pair is written out in full above because this docstring is now inside
+the tree these rules walk, and an example that would fail the rule it documents fails
+the suite. That is the intended outcome: the previous version of this file exempted
+itself by living outside the walk.
 
 Anchored on the unit rather than on the number, so ``1024`` device points and a
 ``window: int = 1024`` are invisible to it and a rate is not. ``405 txn/s`` is a
@@ -941,7 +962,12 @@ or a count, or else the number has to sit directly against the ``/s``.
 SCAN_PERIOD = re.compile(
     r"(?<![\w.])(\d{1,4}(?:\.\d+)?)\s*(?:us|µs)\s+per\s+(?:scan|count)"
 )
-"""``982 us per scan``, ``982.3 us per scan``, ``61.6 us per count``."""
+"""``982 us per scan``, ``981.9 us per scan``, and the withdrawn ``61.6 us per count``.
+
+The first two are ``1e6 / 1018.4`` at the two precisions it gets quoted to. The third is
+the ``U32`` misread's arithmetic residue and is retracted; it appears here as an example
+of what the pattern must catch, which is why the word is in this sentence.
+"""
 
 SCAN_RATE_CONSTANT = re.compile(
     r"^\s*([A-Z][A-Z0-9_]*SCAN_RATE[A-Z0-9_]*)\s*(?::[^=]+)?=\s*([\d_]+(?:\.\d+)?)\s*$",
@@ -1003,23 +1029,32 @@ what you got wrong is worth more than the wrong answer was -- so it may appear, 
 where the surrounding lines say it is not the answer.
 """
 
-PROSE_FILES = (
+CODE_ROOTS = ("bench", "src", "tests", "tools")
+"""Every directory whose ``*.py`` files these rules walk: all of them.
+
+This replaced a hand-written inventory of fourteen paths, and the inventory was itself
+the defect these rules exist to catch. A list of files is a sibling waiting to happen --
+a new bench script, a seventh document, a test module that quotes a bench number back --
+and it fails *open*: the number is published, nothing walks the file, no test complains.
+Widening this tuple is the only way to widen a rule below, and there is nothing left to
+widen it to.
+"""
+
+REQUIRED_TREES = (
     "README.md",
-    "CHANGELOG.md",
-    "docs/architecture.md",
-    "docs/benchmarking.md",
-    "docs/cli.md",
-    "docs/errors.md",
-    "docs/hardware.md",
-    "docs/unverified.md",
-    "bench/_report.py",
-    "bench/access_patterns.py",
-    "bench/soak.py",
-    "bench/transports.py",
-    "tests/hardware/test_fx5u.py",
-    "tests/hardware/test_remote_control.py",
+    "docs/",
+    "bench/",
+    "src/aslmp/",
+    "tests/unit/",
+    "tests/integration/",
+    "tests/hardware/",
+    "tools/",
 )
-"""Everything a reader meets a number in, outside the package itself."""
+"""Trees :func:`all_sources` must actually reach, asserted rather than assumed.
+
+A glob that silently matches nothing is an exemption nobody wrote down. Each of these
+has carried an unconditioned number at some point in this repository's short life.
+"""
 
 HOST_TOKENS = ("192.168.10.41", "192.168.10.36", "argus-bench")
 MEDIUM_TOKENS = ("wi-fi", "wifi", "wired", "radio")
@@ -1041,22 +1076,73 @@ PERCENTILE_CLAIM = re.compile(
 
 Deliberately not every mention of ``p50``: a column heading, an f-string that formats one
 at run time, and a sentence about what percentiles are for are not claims about this
-bench. ``p50 3.67`` and ``+0.07 ms at p50`` are.
+bench. The ``p50 3.67`` of the ``argus-bench`` wired soak, and ``+0.07 ms at p50``, are.
+"""
+
+TWO_AFTERNOON_ROW = re.compile(
+    r"^\|\s*(?:one|the other)\s*\|[^|]*\|[^|]*\|\s*([\d.]+) ms\s*\|\s*([\d.]+) ms\s*\|",
+    re.MULTILINE,
+)
+"""The two rows of the ``docs/benchmarking.md`` two-afternoons table: p50, p99.
+
+Parsed, not retyped, for the same reason :data:`IDLE_SCAN_ROW` is. Those two rows are
+the only place in this repository where this measurement carries its host, its medium
+and its median RTT, which makes them the source and everything else a copy.
+"""
+
+TWO_AFTERNOON_QUOTE = re.compile(
+    r"p50\s+([\d.]+)\s*/\s*p99\s+([\d.]+)\s*ms\s+(?:on\s+)?one\b[^.]{0,60}?"
+    r"p50\s+([\d.]+)\s*/\s*p99\s+([\d.]+)\s*ms"
+)
+"""One prose quotation of the two-afternoons figure, in whatever words it was written.
+
+Matched against whitespace-collapsed text, because six of the nine copies wrap the
+quadruple across a line break and one wraps it mid-percentile.
+"""
+
+TWO_AFTERNOON_FRAGMENT = re.compile(r"\bp(?:50|99)\s+([\d.]+)")
+"""``p50`` or ``p99`` with a number after it -- one endpoint of a pair, wherever it stands.
+
+Written out in words rather than shown as an example, because an example here would be a
+copy of the figure this pattern hunts for, in the file that polices copies of it, inside
+the walk that would then have to allow it.
+
+Used to catch the *half* copy. A quadruple that drifts is caught by comparing it with
+the source; a quadruple that has lost two of its four numbers on the way into a new
+paragraph is caught only by noticing that one of the source's numbers is standing on its
+own, outside any complete quotation.
 """
 
 
-def prose_sources() -> Iterator[tuple[str, str]]:
-    """(path, text) for every document and script that carries published numbers."""
-    for name in PROSE_FILES:
-        path = REPO / name
-        assert path.is_file(), f"{name} is in PROSE_FILES and does not exist"
-        yield name, path.read_text(encoding="utf-8")
+def all_sources() -> list[tuple[str, str]]:
+    """(path, text) for every published document and every Python file in the tree.
 
-
-def package_sources() -> Iterator[tuple[str, str]]:
-    """(path, text) for every module of the package itself."""
-    for path in sorted((REPO / "src" / "aslmp").rglob("*.py")):
-        yield path.relative_to(REPO).as_posix(), path.read_text(encoding="utf-8")
+    **The one source set.** Every rule in this section walks this and nothing narrower;
+    :func:`test_every_rule_in_this_section_walks_the_whole_tree` asserts that none of
+    them has quietly grown its own. That test is the point of this pass: the rule about
+    scan rates walked the package and the rule beside it, written the same afternoon by
+    the same hand, walked prose only -- so a percentile claim inside ``src/aslmp`` was
+    unpoliced by an enforcement suite that had already decided the package needed
+    policing.
+    """
+    documents = [
+        REPO / "README.md",
+        REPO / "CHANGELOG.md",
+        *sorted((REPO / "docs").glob("*.md")),
+    ]
+    sources = [(path.relative_to(REPO).as_posix(), path) for path in documents]
+    for root in CODE_ROOTS:
+        for path in sorted((REPO / root).rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            sources.append((path.relative_to(REPO).as_posix(), path))
+    names = [name for name, _ in sources]
+    missing = [tree for tree in REQUIRED_TREES if not any(n.startswith(tree) for n in names)]
+    assert not missing, (
+        f"all_sources() reaches nothing under {missing}. A rule below is now narrower "
+        f"than it reads, and nothing else in this suite would have said so."
+    )
+    return [(name, path.read_text(encoding="utf-8")) for name, path in sources]
 
 
 def near(lines: Sequence[str], index: int, radius: int = 4) -> str:
@@ -1102,6 +1188,30 @@ def caption_of(lines: Sequence[str], header: int) -> list[str]:
             break
         start -= 1
     return list(lines[start : header + 1])
+
+
+def published_two_afternoons() -> tuple[str, str, str, str]:
+    """The two-afternoons figure, read from the one table that carries its conditions.
+
+    ``docs/benchmarking.md`` prints it as a labelled table -- host, link, median RTT,
+    p50, p99, one row per afternoon -- and every other appearance of it in this
+    repository is a sentence. Nine sentences, at the last count, four of which the
+    docstring of :func:`test_every_percentile_claim_names_its_host_and_its_medium` said
+    were three. This is the source; the rest are checked against it.
+    """
+    matches = TWO_AFTERNOON_ROW.findall(BENCHMARKING_MD.read_text(encoding="utf-8"))
+    assert len(matches) == 2, (
+        f"docs/benchmarking.md must carry exactly two rows of the two-afternoons "
+        f"table; found {len(matches)}. Those rows are the source every prose copy of "
+        f"this figure is checked against."
+    )
+    (first_p50, first_p99), (second_p50, second_p99) = matches
+    assert float(second_p99) / float(first_p99) > 3.0, (
+        f"the two-afternoons table no longer shows a large tail movement "
+        f"({first_p99} -> {second_p99} ms). That movement is the whole argument for "
+        f"demanding a same-session control, and the paragraphs quoting it say 5x."
+    )
+    return first_p50, first_p99, second_p50, second_p99
 
 
 def published_idle_scan_rate() -> float:
@@ -1163,7 +1273,7 @@ def test_no_scan_rate_literal_drifts_from_the_published_one() -> None:
     )
 
     problems: list[str] = []
-    for name, text in list(prose_sources()) + list(package_sources()):
+    for name, text in all_sources():
         for constant, value in SCAN_RATE_CONSTANT.findall(text):
             if abs(float(value.replace("_", "")) - rate) > 0.5:
                 problems.append(
@@ -1202,7 +1312,7 @@ def test_every_scan_period_is_arithmetic_on_the_published_rate() -> None:
     """
     expected = 1e6 / published_idle_scan_rate()
     problems: list[str] = []
-    for name, text in list(prose_sources()) + list(package_sources()):
+    for name, text in all_sources():
         lines = text.splitlines()
         for number, line in enumerate(lines):
             for value in SCAN_PERIOD.findall(line):
@@ -1229,7 +1339,7 @@ def test_every_file_that_quotes_a_scan_figure_cites_where_it_came_from() -> None
     section 17, which is the single place the rate and its conditions live.
     """
     problems: list[str] = []
-    for name, text in list(prose_sources()) + list(package_sources()):
+    for name, text in all_sources():
         if name == "docs/hardware.md":
             continue  # it IS the citation
         if not (SCAN_FIGURE.search(text) or SCAN_PERIOD.search(text)):
@@ -1257,11 +1367,13 @@ def test_every_latency_table_names_its_host_and_its_medium() -> None:
     A table counts as labelled if a host token and a medium token appear in its caption
     -- the prose between its header row and the end of whatever came before it, up to
     fifteen lines (:func:`caption_of`).
+
+    Every source, not only the Markdown. A pipe table pasted into a module docstring is
+    a published latency table with a caption a reader trusts more, not less, and the
+    ``.md`` filter this rule shipped with would have walked straight past it.
     """
     problems: list[str] = []
-    for name, text in prose_sources():
-        if not name.endswith(".md"):
-            continue
+    for name, text in all_sources():
         lines = text.splitlines()
         for header, table in markdown_tables(lines):
             if not any(LATENCY_COLUMN.search(row) for row in table):
@@ -1274,27 +1386,165 @@ def test_every_latency_table_names_its_host_and_its_medium() -> None:
     assert not problems, "latency tables missing their conditions:\n  " + "\n  ".join(problems)
 
 
-def test_every_percentile_claim_in_prose_names_its_host_and_its_medium() -> None:
+def test_every_percentile_claim_names_its_host_and_its_medium() -> None:
     """The same rule off the tables, which is where most of them actually were.
 
-    ``p50 7.1 / p99 18.8 ms on one day and p50 10.3 / p99 95.2 ms on another`` appeared in
-    three files -- ``README.md``, ``docs/benchmarking.md`` and ``bench/_report.py`` -- as
-    the project's own argument for never publishing a latency number without a control,
-    and named neither host nor link in any of them.
+    The two-afternoons figure from the laptop at 192.168.10.41 over Wi-Fi -- ``p50 7.1 /
+    p99 18.8 ms on one day and p50 10.3 / p99 95.2 ms on another`` -- is this project's
+    own argument for never publishing a latency number without a control, and it named
+    neither host nor link in any of the nine places it had been retyped into.
+
+    **This test used to be called ``..._in_prose_...`` and walked prose only.** It was
+    written in the same pass, in this file, as the scan-rate rule three functions above
+    it, which walks the package as well; the author wrote down that exempting
+    ``src/aslmp`` from a citation rule would be "disclosure-instead-of-fix, the exact
+    move this pass exists to stop", and then shipped the adjacent rule doing it. Nine
+    percentile claims inside ``src/aslmp`` named no host: the transport comparison in
+    ``client.py``, the batch-versus-random argument in two command modules, the
+    self-test cost in ``info.py`` and ``timing.py``, the ``TCP_NODELAY`` comment in the
+    TCP transport, and -- the exhibit -- the two-afternoons paragraph in
+    ``observability.py``, which is the figure this docstring is about.
     """
     problems: list[str] = []
-    for name, text in prose_sources():
+    for name, text in all_sources():
         lines = text.splitlines()
         for number, line in enumerate(lines):
-            if line.lstrip().startswith("|") or not PERCENTILE_CLAIM.search(line):
+            if line.lstrip().startswith("|"):
+                continue
+            # The claim is searched across this line and the next, joined. A percentile
+            # that wraps is still a percentile: ``info.py`` said "7.34 ms at" and put
+            # "p50" on the following line, and a line-at-a-time search -- the version
+            # this rule shipped with -- could not see it. Attributed to the first line.
+            joined = " ".join(lines[number : number + 2])
+            if not PERCENTILE_CLAIM.search(joined):
                 continue
             window = near(lines, number, radius=12)
             if not any(host in window for host in HOST_TOKENS):
-                problems.append(f"{name}:{number + 1}: a p50 with no host")
+                problems.append(f"{name}:{number + 1}: a percentile claim with no host")
             elif not any(medium in window for medium in MEDIUM_TOKENS):
-                problems.append(f"{name}:{number + 1}: a p50 with no medium")
+                problems.append(f"{name}:{number + 1}: a percentile claim with no medium")
     assert not problems, "percentile claims missing their conditions:\n  " + "\n  ".join(
         problems
+    )
+
+
+def test_every_copy_of_the_two_afternoons_figure_derives_from_the_one_table() -> None:
+    """Four numbers, one table, and eight paragraphs that may not disagree with it.
+
+    The two-afternoons figure -- the two p50/p99 pairs in ``docs/benchmarking.md``'s
+    labelled table -- is the most-copied measurement in this repository: ``README.md``,
+    ``docs/hardware.md``, ``bench/_report.py``, ``src/aslmp/observability.py``,
+    ``src/aslmp/tools/bench.py``, ``tests/hardware/test_fx5u.py``,
+    ``tests/unit/test_tools.py`` and the rule below it in this file, all retyped from
+    that table. The docstring of the rule below said three. Nobody had counted, because
+    nothing counted for them.
+
+    This paragraph deliberately does not retype the numbers, which is the whole point:
+    the file that polices copies should not be adding one.
+
+    Two ways to get this wrong and both are checked:
+
+    * a **drifted** copy -- one of the four numbers edited in one file and not the rest
+      -- fails because every quadruple is compared with the parsed table;
+    * a **half** copy -- a paragraph that carries the second afternoon's p99 without the
+      afternoon it is being contrasted against -- fails because a number belonging to
+      the source may only stand inside a complete quotation. The half copy is the
+      dangerous one: alone, that number reads as this library's p99 rather than as the
+      worse of two days on one Wi-Fi link.
+    """
+    published = published_two_afternoons()
+    values = set(published)
+    problems: list[str] = []
+    for name, text in all_sources():
+        if name == "docs/benchmarking.md":
+            continue  # it IS the source
+        collapsed = " ".join(text.split())
+        quotes = TWO_AFTERNOON_QUOTE.findall(collapsed)
+        for quote in quotes:
+            if tuple(quote) != published:
+                problems.append(
+                    f"{name}: quotes p50 {quote[0]} / p99 {quote[1]} against p50 "
+                    f"{quote[2]} / p99 {quote[3]}, and docs/benchmarking.md measured "
+                    f"p50 {published[0]} / p99 {published[1]} against p50 "
+                    f"{published[2]} / p99 {published[3]}"
+                )
+        found = TWO_AFTERNOON_FRAGMENT.findall(collapsed)
+        loose = [value for value in found if value in values]
+        if loose and not quotes:
+            problems.append(
+                f"{name}: carries {sorted(set(loose))} from the two-afternoons "
+                f"measurement without quoting the pair it belongs to. Half of that "
+                f"figure is not a smaller claim, it is a wrong one: the tail moved 5x "
+                f"between two afternoons and either number alone reads as the library's."
+            )
+    assert not problems, (
+        "copies of the two-afternoons figure that do not derive from "
+        "docs/benchmarking.md:\n  " + "\n  ".join(problems)
+    )
+
+
+def test_every_rule_in_this_section_walks_the_whole_tree() -> None:
+    """The sibling check, made structural so that the next one cannot be written.
+
+    Every rule in this section takes its files from :func:`all_sources` and there is no
+    second way to get them. A test that built its own narrower walk -- ``rglob`` on one
+    package, a tuple of filenames, ``prose_sources()`` -- would be exactly the defect
+    this pass exists to close, and this fails on it before a reviewer has to notice.
+
+    :func:`all_sources` itself asserts that it reaches every tree in
+    :data:`REQUIRED_TREES`, so "walks everything" cannot be satisfied by a glob that
+    quietly matches nothing.
+    """
+    import ast
+
+    def reads_this_file(call: ast.Call) -> bool:
+        """``Path(__file__).read_text(...)`` -- reading the rules, not the tree."""
+        func = call.func
+        return (
+            isinstance(func, ast.Attribute)
+            and func.attr == "read_text"
+            and isinstance(func.value, ast.Call)
+            and isinstance(func.value.func, ast.Name)
+            and func.value.func.id == "Path"
+            and any(
+                isinstance(arg, ast.Name) and arg.id == "__file__"
+                for arg in func.value.args
+            )
+        )
+
+    module = ast.parse(Path(__file__).read_text(encoding="utf-8"), filename=__file__)
+    section = next(
+        node.lineno
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name == "all_sources"
+    )
+    walkers = {"rglob", "glob", "iterdir", "read_text"}
+    offenders: list[str] = []
+    users: list[str] = []
+    for node in module.body:
+        if not isinstance(node, ast.FunctionDef) or not node.name.startswith("test_"):
+            continue
+        if node.lineno < section:
+            continue  # the table rules above; they read TSVs, not the prose tree
+        called = {
+            child.func.attr if isinstance(child.func, ast.Attribute) else child.func.id
+            for child in ast.walk(node)
+            if isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute | ast.Name)
+            and not reads_this_file(child)
+        }
+        if "all_sources" in called:
+            users.append(node.name)
+        for name in sorted(called & walkers):
+            offenders.append(f"{node.name}: calls {name}() instead of all_sources()")
+    assert not offenders, (
+        "these build their own file walk, which is how one rule ends up narrower than "
+        "the rule beside it:\n  " + "\n  ".join(offenders)
+    )
+    assert len(users) >= 5, (
+        f"only {len(users)} rules walk all_sources(); this section had five when the "
+        f"check was written, and a rule that stopped walking it has stopped enforcing "
+        f"anything: {sorted(users)}"
     )
 
 

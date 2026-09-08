@@ -219,8 +219,9 @@ class TcpTransport:
             sock.setblocking(False)
             if self._nodelay:
                 # Costs nothing and is NOT a latency fix: with NODELAY on, 500
-                # sequential 2-word reads still gave p50 7.338 ms on this CPU. It
-                # removes a delayed-ACK interaction, it does not remove the 7 ms.
+                # sequential 2-word reads still gave p50 7.338 ms on this CPU from the
+                # laptop at 192.168.10.41 over Wi-Fi (2026-09-06, ~7 ms median RTT).
+                # It removes a delayed-ACK interaction, it does not remove the 7 ms.
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             if self._source is not None:
                 sock.bind(self._source)

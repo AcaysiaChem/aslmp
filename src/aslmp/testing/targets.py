@@ -42,6 +42,7 @@ from aslmp.testing.memory import DeviceMemory, ranges_from_profile
 from aslmp.testing.pathology import FX5U_MEASURED, HEALTHY, Pathology
 from aslmp.wire.citations import Citation, Measurement, Provenance
 from aslmp.wire.codec import SpecFormat
+from aslmp.wire.frames import FrameType
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Mapping
@@ -335,6 +336,26 @@ class SimulatorTarget:
     def supports_spec(self, spec: SpecFormat) -> bool:
         """Whether this CPU serves the given device-specification width."""
         return spec is SpecFormat.SHORT or self.long_device_spec
+
+    def serves_frame(self, frame: FrameType) -> bool:
+        """Whether this CPU family answers a frame of this format at all.
+
+        4E is a later addition than 3E, and a family that predates it does not answer a
+        ``54 00`` subheader -- it does not recognise it, which on a socket is silence.
+        The switch that decides *where* a 4E frame is accepted is
+        :attr:`~aslmp.testing.pathology.Pathology.accept_4e_on_3e_entry`, and it is a
+        different question: that one is about an entry configured for the other format
+        on a CPU that speaks both.
+
+        Until 2026-09-07 :attr:`four_e_frames` was declared on all three targets, listed
+        in :func:`diff_targets`' flag table, and read by no handler and no socket: a
+        client could not tell a target that set it ``False`` from one that set it
+        ``True``, which made it a decoration that read as a capability. This method is
+        where it decides something, and
+        ``tests/unit/test_simulator_switchboard.py`` refuses any capability flag that
+        decides nothing.
+        """
+        return frame is not FrameType.FOUR_E or self.four_e_frames
 
     def accepts_random_device(
         self, device: str, *, random_ok: bool, pathology: Pathology | None = None

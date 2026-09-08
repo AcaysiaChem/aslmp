@@ -688,8 +688,9 @@ def test_no_subcommand_can_reach_a_remote_control_command() -> None:
 def test_bench_refuses_to_run_without_a_control(capsys: pytest.CaptureFixture[str]) -> None:
     """``--no-control`` exists only so that the refusal can name it.
 
-    The same rig gave p50 7.1 / p99 18.8 ms one day and p50 10.3 / p99 95.2 ms the next.
-    A latency table with no same-session control is not a measurement.
+    The laptop at 192.168.10.41 over Wi-Fi gave p50 7.1 / p99 18.8 ms one day and p50
+    10.3 / p99 95.2 ms the next (``docs/benchmarking.md``, where that figure and its
+    conditions live). A latency table with no same-session control is not a measurement.
     """
     status = bench_tool.run(
         ["1.2.3.4", "--profile", "melsec:iq-f/fx5u", "--no-control"]

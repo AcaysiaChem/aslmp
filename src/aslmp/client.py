@@ -175,11 +175,15 @@ TRANSPORT_CHOICE: Final = Measurement(
     cpu="FX5U-32MT/DS",
     firmware="1.065",
     date="2026-09-07",
+    host="192.168.10.36 (argus-bench)",
+    medium="wired, 3.64 ms median RTT",
+    samples=300,
     note=(
-        "TCP is the default for CONFIGURABILITY, not for speed. On a wired link UDP is "
-        "faster at every percentile (p50 2.42 against 3.63 ms, p90 3.40 against 4.05, "
-        "p99 3.56 against 4.69, stdev 0.40 against 0.36, n=300 each, control drift 0.01 "
-        "ms). An earlier Wi-Fi measurement showed TCP winning the tail and that was a "
+        "TCP is the default for CONFIGURABILITY, not for speed. On this host and link "
+        "UDP is faster at every percentile (p50 2.42 against 3.63 ms, p90 3.40 against "
+        "4.05, p99 3.56 against 4.69, stdev 0.40 against 0.36, n=300 each, control "
+        "drift 0.01 ms; docs/hardware.md section 5.2). An earlier measurement from the "
+        "laptop at 192.168.10.41 over Wi-Fi showed TCP winning the tail and that was a "
         "property of the radio, not of the protocol: it did not survive a wired retest. "
         "TCP is still the default because a UDP SLMP connection entry on iQ-F is "
         "POINT-TO-POINT -- GX Works3 refuses to save one without a destination IP -- so "

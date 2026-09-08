@@ -5,8 +5,10 @@ this library leans on hardest.
 
 **``0619`` Self Test is the health-check and connect primitive.** It reads no device and
 does not depend on CPU state, and it costs the same as a two-word batch read: 7.34 ms at
-p50 against 6.92 ms, n=300 each (FX5U-32MT/DS fw 1.065, 2026-09-06). So essentially the
-whole ~7 ms is transport plus the SLMP module's service processing, and a loopback is a
+p50 against 6.92 ms, n=300 each (FX5U-32MT/DS fw 1.065, 2026-09-06, from the laptop at
+192.168.10.41 over Wi-Fi at ~7 ms median RTT; ``docs/hardware.md`` section 3). So
+essentially the whole ~7 ms is transport plus the SLMP module's service processing, and
+a loopback is a
 truthful liveness probe with zero side effects. One round trip of it proves, at once,
 that the connection entry is free, that the coding is right, that the frame type is
 accepted, that the route bytes are right and that the PLC is answering *now* -- which is
@@ -117,10 +119,14 @@ SELF_TEST_ON_FX5U: Measurement = Measurement(
     cpu="FX5U-32MT/DS",
     firmware="1.065",
     date="2026-09-06",
+    host="192.168.10.41 (laptop)",
+    medium="Wi-Fi, ~7 ms median RTT",
+    samples=300,
     note=(
         "0619 with 4 bytes of loopback data 41 42 43 44 ('ABCD') echoed 04 00 41 42 43 "
-        "44 in 7.34 ms at p50 over n=300, against 6.92 ms for an 0401 two-word read over "
-        "n=300. A loopback touches no device and does not involve device memory, so "
+        "44 in 7.34 ms at p50, against 6.92 ms for an 0401 two-word read over the same "
+        "n=300 on that host and link (docs/hardware.md section 3). A loopback touches no "
+        "device and does not involve device memory, so "
         "essentially the whole round trip is transport plus SLMP service processing. "
         "This is the zero-side-effect liveness and latency probe."
     ),

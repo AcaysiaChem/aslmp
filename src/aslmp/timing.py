@@ -302,7 +302,8 @@ class TransactionTiming:
 
         On FX5U-32MT/DS fw 1.065 this is essentially the whole transaction: a 4-byte
         ``0619`` loopback with no device access at all cost p50 7.340 ms against
-        p50 6.916 ms for a 2-word ``0401``.
+        p50 6.916 ms for a 2-word ``0401`` (2026-09-06, from the laptop at
+        192.168.10.41 over Wi-Fi at ~7 ms median RTT; ``docs/hardware.md`` section 3).
         """
         return _require(self.first_byte_at, "first_byte_at", "first_byte_ns") - self.sent_at
 

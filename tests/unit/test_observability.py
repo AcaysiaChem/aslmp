@@ -238,6 +238,13 @@ def test_percentile_ns_is_the_free_function_form() -> None:
 
 
 def test_percentiles_render_milliseconds_for_humans() -> None:
+    """The sample is the measured p50, so the rendering is checked against a real one.
+
+    7.338 ms is the p50 of 500 sequential 2-word reads of D4 on FX5U-32MT/DS fw 1.065,
+    2026-09-06, from the laptop at 192.168.10.41 over Wi-Fi at ~7 ms median RTT
+    (``docs/hardware.md`` section 5). One sample, so every percentile is that value:
+    this asserts formatting, not a distribution.
+    """
     p = Percentiles.of([7_338_000])
     assert p.ms(50) == pytest.approx(7.338)
     assert "p50=7.338" in str(p)

@@ -1,9 +1,10 @@
 """``aslmp bench`` -- latency distributions beside a same-session raw-socket control.
 
-**This command refuses to print a table without a control row.** The same machine, the
-same PLC and the same Wi-Fi link gave p50 7.1 / p99 18.8 ms on one day and p50 10.3 /
-p99 95.2 ms on another. A published number with no control is not a measurement, it is a
-souvenir of an afternoon. So every run brackets the library's own suites with a raw
+**This command refuses to print a table without a control row.** The laptop at
+192.168.10.41, the same PLC and the same Wi-Fi link gave p50 7.1 / p99 18.8 ms on one day
+and p50 10.3 / p99 95.2 ms on another (``docs/benchmarking.md``, which is where that
+figure and its conditions live). A published number with no control is not a measurement,
+it is a souvenir of an afternoon. So every run brackets the library's own suites with a raw
 socket that shares **no code with this library**: it builds the 3E binary frame from
 literal bytes and ``struct``, reads the response by its declared length, and stamps
 ``time.monotonic_ns`` on either side. If that control cannot run, nothing is printed.

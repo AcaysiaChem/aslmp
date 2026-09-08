@@ -21,12 +21,15 @@ What lives here:
   able to recompute them from the same samples and get the same answer.
 * :class:`MetricsSnapshot` — one frozen view of all of the above.
 
-Latency context, all measured on **MELSEC iQ-F FX5U-32MT/DS firmware 1.065,
-2026-09-06**: 500 sequential 2-word reads of D4 gave min 4.568 / p50 7.338 / p90 9.710 /
-p99 12.986 / max 38.477 ms with ``TCP_NODELAY`` on. The same machine and PLC produced
-p50 7.1 / p99 18.8 ms on one day and p50 10.3 / p99 95.2 ms on another — which is why
-this module reports a window, a count and a method rather than a single number, and why
-every published table must carry a same-session raw-socket control.
+Latency context, all measured on **MELSEC iQ-F FX5U-32MT/DS firmware 1.065, 2026-09-06,
+from the laptop at 192.168.10.41 over Wi-Fi at ~7 ms median RTT** (``docs/hardware.md``
+section 5): 500 sequential 2-word reads of D4 gave min 4.568 / p50 7.338 / p90 9.710 /
+p99 12.986 / max 38.477 ms with ``TCP_NODELAY`` on. That same host, link and PLC
+produced p50 7.1 / p99 18.8 ms on one afternoon and p50 10.3 / p99 95.2 ms on another —
+the figure is published with its conditions in ``docs/benchmarking.md`` and every other
+appearance of it, including this one, is checked against that table. Which is why this
+module reports a window, a count and a method rather than a single number, and why every
+published table must carry a same-session raw-socket control.
 """
 
 from __future__ import annotations

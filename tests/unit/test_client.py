@@ -650,8 +650,9 @@ def test_a_plc_clock_declares_its_type_and_is_not_assumed_to_be_a_double_word() 
     """``PlcClockSource`` carried an address and nothing else; plan.py hard-coded u32.
 
     On the bench ``D8`` is a ``REAL``, so the timing feature published the float's bit
-    pattern -- monotonic, plausible, and 16x the real rate (FX5U-32MT/DS fw 1.065 from
-    this host over TCP 5002, 2026-09-07: 1018.1 counts/s read as f32, 16273.5 read as u32).
+    pattern -- monotonic, plausible, and 16x the real rate (FX5U-32MT/DS fw 1.065 over
+    TCP 5002, 2026-09-07: the idle 1018 counts/s of ``docs/hardware.md`` section 17, read
+    as f32, became 16273.5 read as u32).
     """
     source = PlcClockSource("D8", kind="f32", bounds=Bounds(0.0, 1.0e7))
     assert source.spec.kind == "f32"
