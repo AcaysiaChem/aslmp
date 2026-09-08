@@ -356,6 +356,37 @@ async def test_one_exchange_writes_the_request_and_reads_exactly_the_response() 
     assert timing.sent_at is not None
 
 
+async def test_an_exchange_that_reads_no_response_closes_the_socket() -> None:
+    """This transport has no ``send``, and ``expect_response=False`` must not become one.
+
+    The request goes out and nothing reads the answer, so nothing here can prove there is
+    not one on its way. A socket kept open after that hands those bytes to the next
+    exchange as fresh data with end code 0x0000, and 3E has no serial No. to reveal it --
+    which is exactly what happened, because this branch used to return early without
+    reading *or* closing.
+    """
+    async with FakeServer(default=Reply(chunks=(bytes(20),))) as server:
+        transport = await connected(server)
+        try:
+            result = await transport.exchange(
+                REQUEST,
+                FixedLength(20),
+                a_deadline(),
+                a_timing(),
+                expect_response=False,
+            )
+            assert result.sent and not result.responded
+            assert result.bytes_received == 0
+            assert not transport.is_open
+            with pytest.raises(SlmpNotConnectedError):
+                await transport.exchange(
+                    REQUEST, FixedLength(20), a_deadline(), a_timing()
+                )
+        finally:
+            await transport.close()
+    assert server.received == [REQUEST]
+
+
 async def test_the_read_stops_at_the_message_and_leaves_the_next_one_alone() -> None:
     """Never ``recv(4096)``. A surplus read is how the next transaction gets stale bytes."""
     async with FakeServer(default=Reply(chunks=(bytes(40),))) as server:

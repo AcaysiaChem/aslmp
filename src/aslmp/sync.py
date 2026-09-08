@@ -54,6 +54,7 @@ from collections.abc import Coroutine, Mapping, Sequence
 from types import TracebackType
 from typing import Any, Final, Literal, Self, TypeVar, final, overload
 
+from aslmp.blocks.plan import BlockPlan, SplitBlockPlan
 from aslmp.client import Handshake, MonitoringTimer, PlcClockSource
 from aslmp.client import Plc as AsyncPlc
 from aslmp.commands.base import AddressLike, WordOrder
@@ -77,6 +78,7 @@ from aslmp.wire.route import Route
 
 __all__ = ["Plc", "shutdown"]
 
+B = TypeVar("B")
 T = TypeVar("T")
 
 _START_TIMEOUT: Final = 5.0
@@ -753,6 +755,68 @@ class Plc:
     def write_blocks(self, blocks: Sequence[BlockWrite], /) -> None:
         """Several contiguous runs written in one frame."""
         self._runtime.submit(self._plc.write_blocks(blocks))
+
+    # ------------------------------------------------------------------------------------
+    # Blocks (DESIGN.md section 2.7)
+    # ------------------------------------------------------------------------------------
+
+    @overload
+    def bind(
+        self,
+        block: type[B],
+        /,
+        *,
+        base: AddressLike | None = ...,
+        allow_split: Literal[False] = ...,
+    ) -> BlockPlan[B]: ...
+
+    @overload
+    def bind(
+        self,
+        block: type[B],
+        /,
+        *,
+        base: AddressLike | None = ...,
+        allow_split: Literal[True],
+    ) -> BlockPlan[B] | SplitBlockPlan[B]: ...
+
+    def bind(
+        self,
+        block: type[B],
+        /,
+        *,
+        base: AddressLike | None = None,
+        allow_split: bool = False,
+    ) -> BlockPlan[B] | SplitBlockPlan[B]:
+        """Bind a ``@plc_block`` class to the client behind this facade. **No I/O.**
+
+        Not submitted to the background loop, because :meth:`aslmp.client.Plc.bind` does
+        no I/O at all -- it resolves addresses, validates ranges and budgets, and builds
+        the frame. Running it on the caller's own thread is what lets a start-up failure
+        raise where the block was declared.
+
+        The plan it returns is bound to the **async** client inside this facade, so
+        ``plan.read()`` is a coroutine and is not the call to make from synchronous code:
+        :meth:`read_block` and :meth:`write_block` are.
+        """
+        if allow_split:
+            return self._plc.bind(block, base=base, allow_split=True)
+        return self._plc.bind(block, base=base)
+
+    def read_block(self, plan: BlockPlan[B], /) -> B:
+        """One ``0403`` from an already-bound plan: :meth:`aslmp.client.Plc.read_block`.
+
+        Here at all because the facade had ``bind``, ``read_block`` and ``write_block``
+        missing entirely while ``read_blocks``/``write_blocks`` -- a different command --
+        were present, so the only way to read a block from synchronous code was to reach
+        past the facade for ``plc.asynchronous``. The plan must be bound to this facade's
+        own client; one bound to another raises and sends nothing.
+        """
+        return self._runtime.submit(self._plc.read_block(plan))
+
+    def write_block(self, plan: BlockPlan[B], value: B, /) -> None:
+        """One ``1402`` writing every field: :meth:`aslmp.client.Plc.write_block`."""
+        self._runtime.submit(self._plc.write_block(plan, value))
 
     def monitor_register(
         self, points: Sequence[RandomPoint], /

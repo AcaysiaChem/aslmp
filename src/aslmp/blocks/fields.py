@@ -86,6 +86,7 @@ __all__ = [
     "I16",
     "I32",
     "IMPLAUSIBLE_VALUE_FINDING",
+    "NUMBER_SPECS",
     "STRING_WORDS",
     "U16",
     "U32",
@@ -108,6 +109,7 @@ __all__ = [
     "at",
     "check_reading",
     "implausible",
+    "number_spec",
     "outside",
     "refuse_write",
     "string_words",
@@ -757,6 +759,53 @@ else:
     _I32Declaration = _declaring(_I32, int)
     _F32Declaration = _declaring(_F32, float)
     _F64Declaration = _declaring(_F64, float)
+
+NUMBER_SPECS: Final[Mapping[PointKind, NumberSpec]] = {
+    "u16": _U16,
+    "i16": _I16,
+    "u32": _U32,
+    "i32": _I32,
+    "f32": _F32,
+}
+"""The field spec behind each single-point numeric kind, keyed the way the wire names it.
+
+The one place outside a ``@plc_block`` class body where this library can be *told* a
+register's type rather than assuming one. A caller who is declaring a single register
+pair -- ``PlcClockSource``, and anything like it -- names a :data:`PointKind` and gets
+back the same :class:`NumberSpec` a block field would have carried, so its width, its
+``struct`` code and its decode all follow the declaration instead of a constant somewhere.
+
+``"bits"`` is absent because a folded bit window is not one value, and ``F64`` is absent
+because it is two access points rather than one: neither is a thing a single declared
+point can be.
+"""
+
+
+def number_spec(kind: PointKind, bounds: Bounds | None, *, what: str) -> NumberSpec:
+    """The :class:`NumberSpec` for one declared kind, carrying ``bounds`` if any.
+
+    Raises :class:`~aslmp.errors.SlmpConfigurationError` for a kind that is not one
+    single numeric access point, and -- through :class:`NumberSpec` itself -- for a bound
+    the declared width could never reach.
+    """
+    spec = NUMBER_SPECS.get(kind)
+    if spec is None:
+        raise SlmpConfigurationError(
+            f"{what}: {kind!r} is not a type one access point can be read as. The "
+            f"choices are {sorted(NUMBER_SPECS)}, spelled exactly as the wire names "
+            f"them. Nothing here defaults to u32: a register pair the PLC program "
+            f"writes as a REAL, read as an unsigned double word, returns the float's "
+            f"bit pattern with end code 0x0000 ({IMPLAUSIBLE_VALUE_FINDING.reference})."
+        )
+    if bounds is None:
+        return spec
+    if not isinstance(bounds, Bounds):
+        raise SlmpConfigurationError(
+            f"{what}: bounds are a Bounds(minimum=..., maximum=...), not "
+            f"{type(bounds).__name__}."
+        )
+    return spec if not bounds.declared else dataclasses.replace(spec, bounds=bounds)
+
 
 Word = Annotated[_WordDeclaration, _WORD]
 """One register, unsigned, with no interpretation imposed on it."""

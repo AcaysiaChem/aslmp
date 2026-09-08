@@ -31,6 +31,8 @@ from typing import Self
 import pytest
 
 from aslmp import sync
+from aslmp.blocks.fields import U16, PlcBlock
+from aslmp.blocks.layout import plc_block
 from aslmp.client import Plc as AsyncPlc
 from aslmp.errors import SlmpConfigurationError, SlmpNotConnectedError, SlmpSinkError
 from aslmp.sync import Plc
@@ -312,3 +314,67 @@ def test_the_surfaces_this_facade_deliberately_omits_are_documented() -> None:
     assert "deliberately missing" in documentation
     for missing in ("remote", "timed", "events"):
         assert missing in documentation
+
+
+# --------------------------------------------------------------------------------------
+# Blocks: the surface the facade did not have
+# --------------------------------------------------------------------------------------
+
+
+def test_the_facade_can_bind_read_and_write_a_block() -> None:
+    """``bind``/``read_block``/``write_block`` were missing entirely from this facade.
+
+    ``read_blocks``/``write_blocks`` -- a different command, ``0406``/``1406`` -- were
+    here, so the omission read as deliberate rather than as an oversight, and the only
+    way to read a ``@plc_block`` from synchronous code was to reach past the facade for
+    ``plc.asynchronous``.
+    """
+
+    @plc_block(base="D100")
+    class Pair(PlcBlock):
+        low: U16
+        high: U16
+
+    with SimulatorThread() as bench:
+        host, port = bench.address
+        with Plc(host, port, profile=FX5U) as plc:
+            plan = plc.bind(Pair)
+            assert plan.plc is plc.asynchronous
+            plc.write_block(plan, Pair(low=11, high=22))
+            state = plc.read_block(plan)
+            assert (state.low, state.high) == (11, 22)
+            assert state.tx is not None
+
+
+def test_the_facade_refuses_a_block_plan_bound_to_another_client() -> None:
+    """Same guard as the async client's, reached through the facade."""
+
+    @plc_block(base="D100")
+    class Pair(PlcBlock):
+        low: U16
+        high: U16
+
+    with SimulatorThread() as bench:
+        host, port = bench.address
+        with Plc(host, port, profile=FX5U) as plc:
+            stranger = AsyncPlc("10.255.255.1", 5099, profile=FX5U)
+            foreign = stranger.bind(Pair)
+            with pytest.raises(SlmpConfigurationError, match="bound to"):
+                plc.read_block(foreign)
+            with pytest.raises(SlmpConfigurationError, match="bound to"):
+                plc.write_block(foreign, Pair(low=1, high=2))
+
+
+def test_binding_through_the_facade_does_no_io_and_needs_no_connection() -> None:
+    """``bind()`` is synchronous on both surfaces, so it is not submitted to the loop."""
+
+    @plc_block(base="D100")
+    class Pair(PlcBlock):
+        low: U16
+        high: U16
+
+    plc = Plc("192.168.10.250", 5002, profile=FX5U)
+    try:
+        assert plc.bind(Pair).points == 2
+    finally:
+        plc.close()

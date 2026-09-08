@@ -30,6 +30,7 @@ from typing import Literal, overload
 from aslmp.blocks.fields import check_reading
 from aslmp.client import (
     Plc,
+    _check_point_value,
     _fits,
     _from_words,
     _RawCommand,
@@ -37,7 +38,7 @@ from aslmp.client import (
     _string_words,
     _to_words,
 )
-from aslmp.commands.base import AddressLike, WordOrder, signed, unsigned
+from aslmp.commands.base import AddressLike, WordOrder, boolean, real, signed, unsigned
 from aslmp.commands.batch import ReadBits, ReadWords, WriteBits, WriteWords
 from aslmp.commands.block import BlockSpec, BlockWrite, ReadBlocks, WriteBlocks
 from aslmp.commands.info import DEFAULT_LOOPBACK, ClearError, ReadTypeName, SelfTest
@@ -248,8 +249,9 @@ class TimedApi:
     async def write_bit(
         self, address: AddressLike, value: bool, /, *, verify: bool = False
     ) -> WriteAck:
-        """One bit device. ``0x1401`` in bit units."""
-        _written, tx = await self._plc._run(WriteBits(address, (value,)), mutates=True)
+        """One bit device. ``0x1401`` in bit units. ``value`` is ``True`` or ``False``."""
+        checked = boolean(value, what=f"write_bit({address})")
+        _written, tx = await self._plc._run(WriteBits(address, (checked,)), mutates=True)
         if verify:
             back = await self._plc.read_bit(address)
             self._plc._check(back, value, what=f"write_bit({address})")
@@ -259,7 +261,7 @@ class TimedApi:
         self, address: AddressLike, value: int, /, *, verify: bool = False
     ) -> WriteAck:
         """One register from a signed 16-bit integer. Never masked, never clamped."""
-        word = unsigned(value, bits=16, what=f"write_i16({address})")
+        word = unsigned(value, bits=16, what=f"write_i16({address})", signed_field=True)
         _written, tx = await self._plc._run(WriteWords(address, (word,)), mutates=True)
         if verify:
             back = await self._plc.read_i16(address)
@@ -270,7 +272,7 @@ class TimedApi:
         self, address: AddressLike, value: int, /, *, verify: bool = False
     ) -> WriteAck:
         """One register from an unsigned 16-bit integer."""
-        word = unsigned(value, bits=16, what=f"write_u16({address})")
+        word = unsigned(value, bits=16, what=f"write_u16({address})", signed_field=False)
         _written, tx = await self._plc._run(WriteWords(address, (word,)), mutates=True)
         if verify:
             back = await self._plc.read_u16(address)
@@ -288,7 +290,7 @@ class TimedApi:
     ) -> WriteAck:
         """Two registers from a signed 32-bit integer."""
         order = self._plc._order(word_order)
-        words = _to_words(struct.pack("<i", _fits(value, signed_field=True, address=address)),
+        words = _to_words(struct.pack("<I", _fits(value, signed_field=True, address=address)),
                           order)
         _written, tx = await self._plc._run(WriteWords(address, words), mutates=True)
         if verify:
@@ -326,7 +328,7 @@ class TimedApi:
     ) -> WriteAck:
         """Two registers from one IEEE-754 single, low word first."""
         order = self._plc._order(word_order)
-        packed = struct.pack("<f", value)
+        packed = struct.pack("<f", real(value, bits=32, what=f"write_f32({address})"))
         _written, tx = await self._plc._run(
             WriteWords(address, _to_words(packed, order)), mutates=True
         )
@@ -347,7 +349,8 @@ class TimedApi:
     ) -> WriteAck:
         """Four registers from one IEEE-754 double."""
         order = self._plc._order(word_order)
-        words = _to_words(struct.pack("<d", value), order)
+        packed = struct.pack("<d", real(value, bits=64, what=f"write_f64({address})"))
+        words = _to_words(packed, order)
         _written, tx = await self._plc._run(WriteWords(address, words), mutates=True)
         if verify:
             read_back = await self._plc.read_f64(address, word_order=order)
@@ -406,14 +409,32 @@ class TimedApi:
         return Reading(values, tx)
 
     async def write_words(self, address: AddressLike, values: Sequence[int], /) -> WriteAck:
-        """``len(values)`` consecutive registers."""
-        _written, tx = await self._plc._run(WriteWords(address, tuple(values)), mutates=True)
-        return WriteAck(len(values), tx)
+        """``len(values)`` consecutive registers.
+
+        A raw register names no type, so ``-1`` and ``65535`` are the same sixteen bits
+        and both are accepted; ``70000`` and ``1.5`` are not, and both raise
+        :class:`~aslmp.errors.SlmpValueRangeError` before anything is built.
+        """
+        checked = tuple(
+            unsigned(value, bits=16, what=f"write_words({address}) value {index}")
+            for index, value in enumerate(values)
+        )
+        _written, tx = await self._plc._run(WriteWords(address, checked), mutates=True)
+        return WriteAck(len(checked), tx)
 
     async def write_bits(self, address: AddressLike, values: Sequence[bool], /) -> WriteAck:
-        """``len(values)`` consecutive bit devices."""
-        _written, tx = await self._plc._run(WriteBits(address, tuple(values)), mutates=True)
-        return WriteAck(len(values), tx)
+        """``len(values)`` consecutive bit devices. Each is ``True`` or ``False``, exactly.
+
+        ``[2]``, ``[-1]`` and ``["yes"]`` raise rather than all writing a 1: Python's
+        truthiness is not the PLC's, and a caller who passed the wrong element of a list
+        would otherwise never find out.
+        """
+        checked = tuple(
+            boolean(value, what=f"write_bits({address}) value {index}")
+            for index, value in enumerate(values)
+        )
+        _written, tx = await self._plc._run(WriteBits(address, checked), mutates=True)
+        return WriteAck(len(checked), tx)
 
     async def write_f32_array(
         self,
@@ -426,8 +447,9 @@ class TimedApi:
         """``len(values)`` IEEE-754 singles into ``2 * len(values)`` registers."""
         order = self._plc._order(word_order)
         words: list[int] = []
-        for value in values:
-            words.extend(_to_words(struct.pack("<f", value), order))
+        for index, value in enumerate(values):
+            checked = real(value, bits=32, what=f"write_f32_array({address}) value {index}")
+            words.extend(_to_words(struct.pack("<f", checked), order))
         _written, tx = await self._plc._run(WriteWords(address, tuple(words)), mutates=True)
         return WriteAck(len(words), tx)
 
@@ -470,9 +492,18 @@ class TimedApi:
         The budget is weighted, not flat: ``word x 12 + dword x 14 <= 1920`` on an FX5U
         (measured). A flat count is wrong in both directions -- 160 word points fit and
         138 double-word points do not.
+
+        Each value is held to the type **its own point names**: an ``i16`` point given
+        40000 raises rather than putting ``0x9C40`` on the wire for the PLC to read back
+        as ``-25536``, exactly as :meth:`write_i16` does. A ``u16`` point is the raw
+        register a point of that kind has always been, so ``-1`` is still its two's
+        complement there.
         """
-        _written, tx = await self._plc._run(WriteRandom(tuple(writes)), mutates=True)
-        return WriteAck(len(writes), tx)
+        checked = tuple(writes)
+        for index, item in enumerate(checked):
+            _check_point_value(item, index)
+        _written, tx = await self._plc._run(WriteRandom(checked), mutates=True)
+        return WriteAck(len(checked), tx)
 
     async def read_blocks(
         self, blocks: Sequence[BlockSpec], /
@@ -598,8 +629,20 @@ class TimedApi:
 
         ``expect_response=False`` is overloaded to return ``None`` rather than widening
         the normal return type, for the same reason ``allow_split`` is: a caller who did
-        not ask for silence never has to narrow a union.
+        not ask for silence never has to narrow a union. It also **retires the connection**
+        -- see :meth:`Connection.retire_after_silent_exchange`.
+
+        **The one thing it does not bypass is the remote-control interlock.** ``0x1001``
+        through ``0x1006`` are refused here unless the client was built with
+        ``allow_remote_control=True``, exactly as :attr:`remote` refuses them. Validation
+        is a property of the *command* and the interlock is a property of the *client*, so
+        ``_RawCommand.validate()`` being a deliberate no-op cannot be the whole story:
+        before this check, ``plc.remote.run()`` raised and ``plc.raw_command(0x1001, 0)``
+        halted or started the same machine on the same client (verified on FX5U-32MT/DS
+        fw 1.065, 2026-09-07). An escape hatch for finding out what a CPU really does is
+        not an escape hatch from "this library can stop a running plant".
         """
+        self._plc._require_interlock_for(command)
         if not expect_response:
             silent = _SilentRawCommand(command, subcommand, payload, mutates)
             return Reading(None, await self._plc._run_silent(silent, mutates=mutates))

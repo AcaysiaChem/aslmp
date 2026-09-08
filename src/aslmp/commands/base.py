@@ -53,8 +53,10 @@ from __future__ import annotations
 
 import abc
 import enum
+import math
+import struct
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Final, Generic, Literal, TypeVar
 
 from aslmp.errors import (
     SlmpAddressRangeError,
@@ -75,7 +77,7 @@ from aslmp.wire.devspec import SlmpDeviceSpecError, devspec_len, encode_device_s
 from aslmp.wire.subcommand import subcommand as derive_subcommand
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
 __all__ = [
     "COMMAND_LAYOUT",
@@ -85,8 +87,10 @@ __all__ = [
     "CommandSummary",
     "EncodeContext",
     "WordOrder",
+    "boolean",
     "expect_empty_payload",
     "expect_payload_len",
+    "real",
     "render_addresses",
     "signed",
     "unsigned",
@@ -418,12 +422,37 @@ def expect_empty_payload(payload: bytes, *, what: str) -> None:
     )
 
 
-def unsigned(value: int, *, bits: int, what: str) -> int:
-    """``value`` as an unsigned ``bits``-wide field, refusing anything that does not fit.
+def unsigned(
+    value: object, *, bits: int, what: str, signed_field: bool | None = None
+) -> int:
+    """``value`` as the unsigned ``bits``-wide field on the wire. **Enforces the type asked
+    for.**
 
     Never masked and never truncated: ``pymcprotocol`` writes ``0x1FFFF`` into a 16-bit
-    register as ``0xFFFF`` and reports success. A negative value is accepted as its
-    two's-complement rendering, which is what a signed device value is.
+    register as ``0xFFFF`` and reports success.
+
+    ``signed_field`` names the *declared* type and is the whole of the check:
+
+    ``True``
+        A signed field. ``-32768..32767`` at 16 bits, and nothing else.
+        ``write_i16(40000)`` raises here rather than reading back ``-25536``.
+    ``False``
+        An unsigned field. ``0..65535`` at 16 bits, and nothing else.
+        ``write_u16(-1)`` raises here rather than writing ``0xFFFF``.
+    ``None``
+        A **raw register**, where the caller named no type: ``write_words`` puts sixteen
+        bits into sixteen bits and ``-1`` and ``65535`` are the same register. The union
+        of the two ranges is accepted and a negative is rendered as its two's complement,
+        which is the only thing it could mean. This is not a mask of an out-of-range
+        value; ``write_words([70000])`` still raises.
+
+    The union was once the behaviour of every caller, and that is the defect this
+    parameter closes: a named type whose range is not enforced is a value silently
+    changed on the way to the plant, which is exactly what this library exists to stop.
+
+    A value that is not an ``int`` at all -- ``write_words([1.5])`` -- is refused here
+    too, and with an :class:`~aslmp.errors.SlmpValueRangeError` rather than the bare
+    ``TypeError`` that ``1.5 & 0xFFFF`` used to raise from inside the encoder.
 
     Raises :class:`~aslmp.errors.SlmpValueRangeError` -- DESIGN section 3.1's class for
     "value outside the declared field's domain" -- and not the general
@@ -431,13 +460,112 @@ def unsigned(value: int, *, bits: int, what: str) -> int:
     incoherently *configured* client in one ``except`` clause. Both are
     ``SlmpUsageError`` and both mean nothing was sent.
     """
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise SlmpValueRangeError(
+            f"{what}: a {bits}-bit device field takes an int, not "
+            f"{type(value).__name__} ({value!r}). Nothing here rounds, truncates or "
+            f"reads a bool as one and zero."
+        )
     limit = 1 << bits
-    if -(limit >> 1) <= value < limit:
-        return value & (limit - 1)
+    if signed_field is None:
+        if -(limit >> 1) <= value < limit:
+            return value & (limit - 1)
+        low, high, named = -(limit >> 1), limit - 1, "a raw register"
+    elif signed_field:
+        if -(limit >> 1) <= value < (limit >> 1):
+            return value & (limit - 1)
+        low, high, named = -(limit >> 1), (limit >> 1) - 1, f"a signed {bits}-bit field"
+    else:
+        if 0 <= value < limit:
+            return value
+        low, high, named = 0, limit - 1, f"an unsigned {bits}-bit field"
     raise SlmpValueRangeError(
-        f"{what}: {value} does not fit a {bits}-bit device field. The signed range is "
-        f"{-(limit >> 1)}..{(limit >> 1) - 1} and the unsigned range is 0..{limit - 1}. "
-        f"Nothing here masks, clamps or wraps."
+        f"{what}: {value} does not fit {named}, whose range is {low}..{high}. Nothing "
+        f"here masks, clamps or wraps -- 40000 written to a signed 16-bit field reads "
+        f"back as -25536, and the PLC answers 0x0000 to both. Declare the type you "
+        f"meant, or pass a value inside it."
+    )
+
+
+_REAL_LIMITS: Final[Mapping[int, float]] = {
+    32: 3.4028234663852886e38,
+    64: 1.7976931348623157e308,
+}
+"""The largest finite magnitude each IEEE-754 width can hold. Same numbers as
+:data:`aslmp.blocks.fields._REPRESENTABLE`, which judges a *declared bound* rather than a
+*value*. Used only to explain a refusal -- :func:`real` decides with :data:`_REAL_FORMATS`,
+because a double slightly ABOVE these rounds down to them and is perfectly legal."""
+
+_REAL_FORMATS: Final[Mapping[int, str]] = {32: "<f", 64: "<d"}
+"""The pack code each width refuses through, so the boundary is exact by construction."""
+
+
+def real(value: object, *, bits: int, what: str) -> float:
+    """``value`` as an IEEE-754 ``bits``-wide float, refusing anything that does not fit.
+
+    The float half of :func:`unsigned`, and it exists for the same reason: ``struct.pack``
+    answers an over-large magnitude with a bare ``OverflowError`` and a non-number with a
+    bare ``struct.error``, neither of which is in the DESIGN section 3.1 tree, so a
+    caller's ``except SlmpError`` around a write does not catch the one failure it is
+    there for.
+
+    Infinities and NaN are **accepted**: they are representable in both widths, and a PLC
+    program that stores them meant to. It is a *finite* magnitude past the format's
+    maximum that is refused, because rounding it to infinity is the silent substitution
+    this library forbids.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise SlmpValueRangeError(
+            f"{what}: an IEEE-754 {bits}-bit field takes a real number, not "
+            f"{type(value).__name__} ({value!r})."
+        )
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise SlmpValueRangeError(
+            f"{what}: {value!r} is too large to be a float at all, let alone an "
+            f"IEEE-754 {bits}-bit one. Nothing was sent."
+        ) from exc
+    if not math.isfinite(number):
+        return number
+    # Ask struct, do not compare against a constant.
+    #
+    # An earlier version tested `-FLT_MAX <= number <= FLT_MAX` and refused values that
+    # pack perfectly well. The representable maximum is not the acceptable maximum: under
+    # round-to-nearest every double below the midpoint of FLT_MAX and the next exponent
+    # rounds DOWN to FLT_MAX, so 3.4028235e38 -- the literal in our own hardware test, and
+    # the one everybody writes for "max float32" -- is legal and was being rejected.
+    # Rounding a finite magnitude to infinity would be the silent substitution this
+    # library forbids; rounding one float to its nearest float is just the format.
+    #
+    # Deferring to struct.pack makes the boundary exact by construction and keeps it
+    # exact if the platform's rounding ever differs from ours.
+    try:
+        struct.pack(_REAL_FORMATS[bits], number)
+    except OverflowError as exc:
+        limit = _REAL_LIMITS[bits]
+        raise SlmpValueRangeError(
+            f"{what}: {number!r} is past what an IEEE-754 {bits}-bit field can hold "
+            f"(its largest finite magnitude is {limit!r}, and this does not round to it). "
+            f"Nothing here rounds it to infinity to make it fit. Nothing was sent."
+        ) from exc
+    return number
+
+
+def boolean(value: object, *, what: str) -> bool:
+    """``value`` as one bit, refusing anything that is not already a ``bool``.
+
+    ``bool(value)`` would make ``2``, ``-1`` and ``"yes"`` all write a 1 and ``0.0``,
+    ``[]`` and ``"false"`` all write a 0 -- Python's truthiness is not the PLC's, and a
+    caller who passed the wrong element of a list would never find out. A bit device
+    holds one of two states and this library will not guess which one a third value meant.
+    """
+    if isinstance(value, bool):
+        return value
+    raise SlmpValueRangeError(
+        f"{what}: a bit device takes True or False, not {type(value).__name__} "
+        f"({value!r}). Nothing here treats a non-empty value as on: 2, -1 and 'yes' are "
+        f"not one, and 0.0, [] and 'false' are not zero."
     )
 
 

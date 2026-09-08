@@ -789,7 +789,41 @@ async def test_a_request_that_expects_no_response_still_burns_the_token() -> Non
                 with pytest.raises(SlmpUsageError):
                     await txn.exchange_without_response(a_request(), mutates=True)
             assert timing.sent_at > 0
+        finally:
+            await connection.aclose()
+
+
+async def test_a_request_that_expects_no_response_retires_the_socket() -> None:
+    """The regression for the desynchronised-but-READY socket.
+
+    ``exchange_without_response`` used to leave the connection OPEN and the socket in
+    service. Nothing read the answer, so nothing could prove there was not one waiting,
+    and the next transaction on the same connection would decode the previous request's
+    response as its own -- with end code 0x0000 and, on 3E, no serial No. to catch it.
+    """
+    async with FakeServer(default=None) as server:
+        connection = await a_connection(server)
+        try:
+            async with connection.transaction(command=0x1006) as txn:
+                await txn.exchange_without_response(a_request(), mutates=True)
+            assert connection.state is ConnectionState.FAILED
+            assert not connection.transport.is_open
+            with pytest.raises(SlmpNotConnectedError):
+                connection.require_usable("read the next register")
+        finally:
+            await connection.aclose()
+
+
+async def test_a_retired_socket_is_recoverable_by_an_explicit_reconnect() -> None:
+    """FAILED rather than CLOSED, so 0x1006's caller can reopen after the CPU comes back."""
+    async with FakeServer(default=None) as server:
+        connection = await a_connection(server)
+        try:
+            async with connection.transaction(command=0x1006) as txn:
+                await txn.exchange_without_response(a_request(), mutates=True)
+            await connection.reopen(reason="the CPU finished resetting")
             assert connection.state is ConnectionState.OPEN
+            assert connection.generation == 1
         finally:
             await connection.aclose()
 

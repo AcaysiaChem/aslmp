@@ -28,6 +28,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import inspect
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -36,27 +37,34 @@ from typing import Any
 
 import pytest
 
+from aslmp.blocks.fields import U16, Bounds
+from aslmp.blocks.layout import plc_block
 from aslmp.client import (
+    REMOTE_CONTROL_COMMANDS,
     Handshake,
     MonitoringTimer,
     Plc,
     PlcClockSource,
     _build_transport,
+    _check_point_value,
     _from_words,
     _RawCommand,
     _SilentRawCommand,
     _string_words,
     _to_words,
 )
-from aslmp.commands.base import EncodeContext, WordOrder
+from aslmp.commands.base import EncodeContext, WordOrder, boolean, real, unsigned
 from aslmp.commands.batch import ReadWords
+from aslmp.commands.random import RandomWrite
 from aslmp.errors import (
     ClientSummary,
+    SlmpBlockLayoutError,
     SlmpCapabilityError,
     SlmpConfigurationError,
     SlmpDeviceRadixError,
     SlmpMonitoringTimerError,
     SlmpNotConnectedError,
+    SlmpValueRangeError,
 )
 from aslmp.profile import Capability, Encoding, Evidence, Link, Refusal
 from aslmp.profiles import FX5U, IQ_R
@@ -624,3 +632,178 @@ def test_the_timed_facade_is_built_once_and_cached() -> None:
     assert isinstance(facade, TimedApi)
     assert plc.timed is facade
     assert facade.plc is plc
+
+
+# ========================================================================================
+# The four silent-wrong-data paths, each with the refusal that closes it
+# ========================================================================================
+
+
+def test_a_plc_clock_declares_its_type_and_is_not_assumed_to_be_a_double_word() -> None:
+    """``PlcClockSource`` carried an address and nothing else; plan.py hard-coded u32.
+
+    On the bench ``D8`` is a ``REAL``, so the timing feature published the float's bit
+    pattern -- monotonic, plausible, and 16x the real rate (FX5U-32MT/DS fw 1.065 from
+    this host over TCP 5002, 2026-09-07: 1018.1 counts/s read as f32, 16273.5 read as u32).
+    """
+    source = PlcClockSource("D8", kind="f32", bounds=Bounds(0.0, 1.0e7))
+    assert source.spec.kind == "f32"
+    assert source.spec.struct_code == "f"
+    assert source.spec.words == 2
+    assert source.spec.bounds == Bounds(0.0, 1.0e7)
+    assert a_client(plc_clock=source).plc_clock is source
+
+
+def test_a_plc_clock_kind_that_is_not_one_access_point_is_refused_at_construction() -> None:
+    for kind in ("bits", "f64", "real", ""):
+        with pytest.raises(SlmpConfigurationError, match="not a type one access point"):
+            PlcClockSource("D8", kind=kind)  # type: ignore[arg-type]
+
+
+def test_a_plc_clock_bound_its_width_cannot_reach_is_refused_at_construction() -> None:
+    """The same rule a bounded block field lives under, from the same code."""
+    with pytest.raises(SlmpBlockLayoutError, match="outside what a U16 can hold"):
+        PlcClockSource("D8", kind="u16", bounds=Bounds(maximum=70_000))
+
+
+def test_write_i16_refuses_a_value_outside_the_signed_range_it_named() -> None:
+    """The regression: ``write_i16(40000)`` used to be accepted and read back -25536.
+
+    Verified on the CPU before the fix (FX5U-32MT/DS fw 1.065, TCP 5002, 2026-09-07):
+    ``write_i16("D100", 40000)`` returned normally and ``read_i16("D100")`` answered
+    ``-25536``, with end code ``0x0000`` at every step.
+    """
+    assert unsigned(40_000, bits=16, what="x") == 40_000  # a raw register still may
+    with pytest.raises(SlmpValueRangeError, match="signed 16-bit field"):
+        unsigned(40_000, bits=16, what="write_i16(D100)", signed_field=True)
+    with pytest.raises(SlmpValueRangeError, match="unsigned 16-bit field"):
+        unsigned(-1, bits=16, what="write_u16(D100)", signed_field=False)
+    assert unsigned(-1, bits=16, what="x", signed_field=True) == 0xFFFF
+    assert unsigned(65_535, bits=16, what="x", signed_field=False) == 0xFFFF
+
+
+def test_a_word_value_that_is_not_an_int_is_a_slmp_error_and_not_a_type_error() -> None:
+    """``write_words("D100", [1.5])`` raised a bare TypeError from ``1.5 & 0xFFFF``."""
+    with pytest.raises(SlmpValueRangeError, match="takes an int, not float"):
+        unsigned(1.5, bits=16, what="write_words(D100) value 0")
+    with pytest.raises(SlmpValueRangeError, match="takes an int, not bool"):
+        unsigned(True, bits=16, what="write_words(D100) value 0")
+
+
+def test_a_float_value_domain_failure_is_a_slmp_error_and_not_an_overflow_error() -> None:
+    """``write_f32("D100", 1e39)`` raised OverflowError; ``"x"`` raised struct.error."""
+    with pytest.raises(SlmpValueRangeError, match="past what an IEEE-754"):
+        real(1e39, bits=32, what="write_f32(D100)")
+    with pytest.raises(SlmpValueRangeError, match="takes a real number, not str"):
+        real("x", bits=32, what="write_f32(D100)")
+    with pytest.raises(SlmpValueRangeError, match="too large to be a float at all"):
+        real(10**400, bits=32, what="write_f32(D100)")
+    assert real(float("inf"), bits=32, what="x") == float("inf")
+
+
+def test_the_f32_boundary_is_struct_pack_and_not_a_constant() -> None:
+    """A regression: comparing against FLT_MAX refused values that pack perfectly well.
+
+    The representable maximum is not the acceptable maximum. Under round-to-nearest every
+    double below the midpoint of FLT_MAX and the next exponent rounds DOWN to FLT_MAX, so
+    ``3.4028235e38`` -- the literal everybody writes for "max float32", and the one our own
+    hardware test uses against the PLC -- is legal. An earlier fix rejected it.
+
+    The boundary is therefore decided by ``struct.pack`` rather than by a constant, which
+    makes it exact by construction. This test pins the two sides of it.
+    """
+    packs_fine = [
+        3.4028234663852886e38,   # FLT_MAX itself
+        3.4028235e38,            # the usual literal; rounds down to FLT_MAX
+        -3.4028235e38,
+        3.4028235677973360e38,   # just under the midpoint; still rounds down
+    ]
+    for value in packs_fine:
+        struct.pack("<f", value)                      # the oracle: it really does pack
+        assert real(value, bits=32, what="probe") == value
+
+    does_not_pack = [3.4028235677973366e38, -3.4028235677973366e38, 1e39]
+    for value in does_not_pack:
+        # OverflowError, not struct.error: CPython raises the former for a float whose
+        # magnitude is past the format, and that difference is exactly why the bare
+        # exception escaping to callers was worth catching in the first place.
+        with pytest.raises((OverflowError, struct.error)):
+            struct.pack("<f", value)
+        with pytest.raises(SlmpValueRangeError, match="past what an IEEE-754"):
+            real(value, bits=32, what="probe")
+    assert real(1e39, bits=64, what="x") == 1e39
+
+
+def test_a_bit_value_that_is_not_a_bool_is_refused_rather_than_coerced() -> None:
+    """``write_bits("M100", [2, -1, "yes"])`` used to write three ones and say ok."""
+    values: tuple[object, ...] = (2, -1, "yes", 0.0, [], None)
+    for value in values:
+        with pytest.raises(SlmpValueRangeError, match="takes True or False"):
+            boolean(value, what="write_bits(M100) value 0")
+    assert boolean(True, what="x") is True
+    assert boolean(False, what="x") is False
+
+
+def test_a_raw_remote_control_command_needs_the_same_interlock_remote_does() -> None:
+    """``_RawCommand.validate()`` is a no-op, so the client is where this has to live.
+
+    Verified before the fix (FX5U-32MT/DS fw 1.065, 2026-09-07): ``plc.remote.run()``
+    raised and ``plc.raw_command(0x1001, 0x0000, ...)`` succeeded on the same client.
+    """
+    assert set(REMOTE_CONTROL_COMMANDS) == {0x1001, 0x1002, 0x1003, 0x1005, 0x1006}
+    locked = a_client()
+    for code in REMOTE_CONTROL_COMMANDS:
+        with pytest.raises(SlmpConfigurationError, match="allow_remote_control=True"):
+            locked._require_interlock_for(code)
+    locked._require_interlock_for(0x0403)
+    unlocked = a_client(allow_remote_control=True)
+    for code in REMOTE_CONTROL_COMMANDS:
+        unlocked._require_interlock_for(code)
+
+
+def test_read_block_and_write_block_refuse_a_plan_bound_to_another_client() -> None:
+    """The regression: ``self`` was unused, so both transacted on the plan's own client.
+
+    Verified before the fix (FX5U-32MT/DS fw 1.065, TCP 5002, 2026-09-07): a ``Plc`` that
+    had never been connected, aimed at a host that does not exist, returned a populated
+    block and reported a successful write, while the bound client's counters moved and
+    ``D100``/``D101`` on the real CPU took the values passed to the ghost.
+    """
+
+    @plc_block(base="D100")
+    class Two:
+        a: U16
+        b: U16
+
+    bound = a_client()
+    plan = bound.bind(Two)
+    ghost = Plc("10.255.255.1", 5099, profile="melsec:iq-f/fx5u")
+    assert plan.plc is bound
+
+    for what in ("read_block()", "write_block()"):
+        with pytest.raises(SlmpConfigurationError, match="bound to") as caught:
+            ghost._own_plan(plan, what)
+        assert what in str(caught.value)
+    assert bound._own_plan(plan, "read_block()") is plan
+
+
+def test_write_random_holds_each_value_to_the_type_its_own_point_names() -> None:
+    """The same defect one layer along: a point's ``kind`` is a named type too.
+
+    ``RandomWrite(word("D100", kind="i16"), 40000).wire_value()`` still returns 40000 --
+    ``aslmp.commands.random`` shares the raw-register helper -- so the public surface is
+    where the point's own declaration is enforced.
+    """
+    from aslmp.commands.random import dword, word
+
+    _check_point_value(RandomWrite(word("D100", kind="i16"), 32_767), 0)
+    _check_point_value(RandomWrite(word("D100", kind="u16"), -1), 0)
+    _check_point_value(RandomWrite(dword("D100", kind="f32"), 1.5), 0)
+    for bad in (
+        RandomWrite(word("D100", kind="i16"), 40_000),
+        RandomWrite(dword("D100", kind="i32"), 3_000_000_000),
+        RandomWrite(dword("D100", kind="f32"), 1e39),
+        RandomWrite(word("D100", kind="u16"), 70_000),
+    ):
+        with pytest.raises(SlmpValueRangeError):
+            _check_point_value(bad, 0)

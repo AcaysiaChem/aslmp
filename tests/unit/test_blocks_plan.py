@@ -33,6 +33,8 @@ from aslmp.blocks.fields import (
     U32,
     Bit,
     BlockTransaction,
+    Bounds,
+    SlmpImplausibleValueError,
     Str,
     Word,
     at,
@@ -677,6 +679,92 @@ def test_the_clock_point_does_not_become_a_block_field() -> None:
     plan = bind(plc, Bench)
     payload = struct.pack("<HHfII", 7, 1, 12.5, 999, 4242)
     assert set(decode(plan, payload)) == {"mode", "fault", "setpoint", "scan"}
+
+
+def test_a_real_clock_is_decoded_as_a_real_and_not_as_its_bit_pattern() -> None:
+    """The regression for the U32-against-a-REAL misread, in the timing feature itself.
+
+    ``D8``/``D9`` on the bench hold ``0xFEA0 0x4970``. Read as the f32 the CPU's own ST
+    writes (``IO_Scan := IO_Scan + 1.0``) that is 987114; read as the unsigned double word
+    this library used to hard-code it is 1232141984 -- the float's bit pattern, monotonic,
+    plausible, and wrong by a factor that halves at every power of two. Measured on
+    FX5U-32MT/DS fw 1.065 from this host over TCP 5002, 2026-09-07.
+    """
+    registers = struct.pack("<HH", 0xFEA0, 0x4970)
+    misread, = struct.unpack("<I", registers)
+    assert misread == 1232141984
+
+    plc = a_client(plc_clock=PlcClockSource("D8", kind="f32"))
+    plan = bind(plc, Bench)
+    point = plan._reader.dword_points[-1]
+    assert str(point) == "D8:f32"
+    assert point.kind == "f32"
+    assert point.width.bits == 32
+
+    payload = struct.pack("<HHf", 7, 1, 12.5) + struct.pack("<I", 999) + registers
+    values = plan._reader.unpack(payload, binary=True)
+    at = plan._reader.clock_index
+    assert at is not None
+    assert plan._reader.clock_count(values[at]) == 987114
+
+
+def test_a_clock_declared_u32_reads_the_bit_pattern_because_that_is_the_declaration() -> None:
+    """Nothing here sniffs the bytes. The default is a default, not a guess."""
+    plc = a_client(plc_clock=PlcClockSource("D8"))
+    plan = bind(plc, Bench)
+    payload = struct.pack("<HHfI", 7, 1, 12.5, 999) + struct.pack("<HH", 0xFEA0, 0x4970)
+    values = plan._reader.unpack(payload, binary=True)
+    at = plan._reader.clock_index
+    assert at is not None
+    assert plan._reader.clock_count(values[at]) == 1232141984
+
+
+def test_a_word_wide_clock_costs_a_word_point_and_not_a_double_word_one() -> None:
+    """The access width follows the declared type, which is the whole of the fix."""
+    plc = a_client(plc_clock=PlcClockSource("D8", kind="u16"))
+    plan = bind(plc, Bench)
+    assert [str(a) for a in plan.word_points] == ["D400", "M100", "D8"]
+    assert [str(a) for a in plan.dword_points] == ["D0", "D2"]
+    payload = struct.pack("<HHHfI", 7, 1, 4242, 12.5, 999)
+    values = plan._reader.unpack(payload, binary=True)
+    at = plan._reader.clock_index
+    assert at is not None
+    assert plan._reader.clock_count(values[at]) == 4242
+
+
+def test_a_clock_outside_its_declared_bounds_is_refused_rather_than_published() -> None:
+    """The same promise a bounded block field makes, for the one point that is not one."""
+    plc = a_client(plc_clock=PlcClockSource("D8", kind="f32", bounds=Bounds(0.0, 1.0e7)))
+    plan = bind(plc, Bench)
+    ok = struct.pack("<HHfI", 7, 1, 12.5, 999) + struct.pack("<f", 987114.0)
+    assert decode(plan, ok)["setpoint"] == 12.5
+    bad = struct.pack("<HHfI", 7, 1, 12.5, 999) + struct.pack("<f", 2.0e7)
+    with pytest.raises(SlmpImplausibleValueError) as caught:
+        decode(plan, bad)
+    assert caught.value.field == "plc_clock"
+    assert caught.value.address == "D8"
+    assert caught.value.registers == (0x9680, 0x4B98)
+
+
+def test_a_clock_label_names_the_point_in_the_report_and_in_a_refusal() -> None:
+    """``label`` was declared and never read. It is read now."""
+    source = PlcClockSource("D8", kind="f32", bounds=Bounds(maximum=1.0), label="scan")
+    plan = bind(a_client(plc_clock=source), Bench)
+    payload = struct.pack("<HHfI", 7, 1, 12.5, 999) + struct.pack("<f", 5.0)
+    with pytest.raises(SlmpImplausibleValueError) as caught:
+        decode(plan, payload)
+    assert caught.value.field == "scan"
+
+
+def test_a_non_finite_clock_is_refused_rather_than_turned_into_a_count() -> None:
+    """``int(nan)`` is a ValueError, which is not in the DESIGN section 3.1 tree."""
+    plan = bind(a_client(plc_clock=PlcClockSource("D8", kind="f32")), Bench)
+    payload = struct.pack("<HHfI", 7, 1, 12.5, 999) + struct.pack("<f", float("nan"))
+    values = plan._reader.unpack(payload, binary=True)
+    at = plan._reader.clock_index
+    assert at is not None
+    with pytest.raises(SlmpPayloadShapeError, match="not a count"):
+        plan._reader.clock_count(values[at])
 
 
 # ========================================================================================

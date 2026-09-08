@@ -48,16 +48,25 @@ import struct
 import time
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import field as _dataclass_field
 from types import TracebackType
 from typing import TYPE_CHECKING, ClassVar, Final, Literal, Self, TypeVar, final, overload
 
-from aslmp.blocks.fields import check_reading
+from aslmp.blocks.fields import (
+    Bounds,
+    NumberSpec,
+    PointKind,
+    check_reading,
+    number_spec,
+)
 from aslmp.commands.base import (
     AddressLike,
     Command,
     CommandSummary,
     EncodeContext,
     WordOrder,
+    boolean,
+    real,
     signed,
     unsigned,
 )
@@ -312,19 +321,77 @@ class Handshake(enum.Enum):
 @final
 @dataclass(frozen=True, slots=True)
 class PlcClockSource:
-    """Where the PLC's own free-running counter lives, if the caller has one.
+    """Where the PLC's own free-running counter lives, if the caller has one, **and what
+    type the PLC program writes it as**.
 
-    Our bench keeps a scan counter at ``D8``/``D9`` as one double word. A block plan bound
-    with a clock source appends that one extra access point to its ``0403``, so every
-    cycle carries the PLC's own notion of time inside the same snapshot as the data --
-    which is the only way to tell "the network was slow" from "the CPU did not scan".
+    Our bench keeps a scan counter at ``D8``/``D9``. A block plan bound with a clock source
+    appends that one extra access point to its ``0403``, so every cycle carries the PLC's
+    own notion of time inside the same snapshot as the data -- which is the only way to
+    tell "the network was slow" from "the CPU did not scan".
 
-    The client stores it and exposes it; :mod:`aslmp.blocks.plan` is what folds it into a
+    .. rubric:: ``kind`` is required reading, and it used to be a constant
+
+    This class once carried an address and nothing else, and
+    :mod:`aslmp.blocks.plan` read it as a hard-coded unsigned double word. On the bench
+    that wrote it, ``D8`` is a ``REAL``: the CPU's own ST is ``IO_Scan := IO_Scan + 1.0``.
+    So ``tx.plc_clock`` published the float's **bit pattern**, which rises monotonically
+    for positive floats and is therefore a plausible, useless counter -- 1018 real
+    counts/s were reported as 16274, and that 16x is not even constant, because the
+    ulp-step of a REAL halves at every power of two
+    (:data:`~aslmp.blocks.fields.IMPLAUSIBLE_VALUE_FINDING`; measured again on
+    FX5U-32MT/DS fw 1.065 from this host over TCP 5002, 2026-09-07:
+    ``D8/D9 = 0xFEA0 0x4970`` is the f32 987114.0 and the u32 1232141984).
+
+    A register carries no type on the wire, so nothing here can detect that and nothing
+    here guesses. ``kind`` is how you say it, in exactly the vocabulary a block field's
+    :class:`~aslmp.blocks.fields.NumberSpec` uses::
+
+        PlcClockSource("D8", kind="f32", bounds=Bounds(0.0, 1.0e7))
+
+    ``bounds`` is the same optional promise a bounded block field makes
+    (:class:`~aslmp.blocks.fields.Bounds`) and is checked on every cycle: a clock outside
+    the declared range raises
+    :class:`~aslmp.blocks.fields.SlmpImplausibleValueError` rather than being published.
+    Declaring one is the only defence against the *next* mis-declaration, since the wrong
+    type still answers ``0x0000``.
+
+    ``kind`` defaults to ``"u32"`` for compatibility with the callers this class already
+    had -- a default that was previously not even expressible. It is a default, not a
+    guess: check the type in GX Works3 under ``Label -> Global Label`` and declare it.
+
+    The client stores this and exposes it; :mod:`aslmp.blocks.plan` is what folds it into a
     request. Nothing here silently adds a point to a caller's own ``read_random``.
     """
 
     address: AddressLike
+    kind: PointKind = "u32"
+    bounds: Bounds | None = None
     label: str = "plc_clock"
+
+    spec: NumberSpec = _dataclass_field(init=False, repr=False, compare=False)
+    """The field spec this declaration resolves to: width, ``struct`` code and kind.
+
+    Exactly what a block field of the same type carries, which is the point -- there is
+    one description of "two registers holding an IEEE-754 float" in this library, and both
+    the annotation ``F32`` and ``kind="f32"`` resolve to it.
+    """
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.label, str) or not self.label.strip():
+            raise SlmpConfigurationError(
+                f"PlcClockSource(label=...) names the point in a block report and in a "
+                f"range refusal; it cannot be {self.label!r}."
+            )
+        # Built here rather than at bind so that a kind that is not a single access
+        # point, or a bound the declared width could never reach, is a start-up failure
+        # in the file that declares it and not a surprise on the first cycle.
+        object.__setattr__(
+            self, "spec", number_spec(self.kind, self.bounds, what=self.describe())
+        )
+
+    def describe(self) -> str:
+        """``PlcClockSource('D8', kind='f32')`` -- the declaration, for a refusal."""
+        return f"PlcClockSource({str(self.address)!r}, kind={self.kind!r})"
 
 
 # ========================================================================================
@@ -464,6 +531,17 @@ class _SilentRawCommand(_RawCommand):
     response on the socket, which is how the next transaction reads this one's bytes as
     fresh data -- so the connection closes the socket when the token is burnt without a
     read, rather than reusing it.
+
+    That sentence used to be false. ``response_optional = True`` here defeats the guard
+    in :meth:`Plc._run_silent`, ``TcpTransport.exchange`` returned early without reading
+    or closing, and the close in ``Connection.transaction``'s ``finally`` never fired
+    because ``exchange_without_response`` had already marked the transaction finished --
+    so the connection stayed ``READY`` and the next transaction decoded the previous
+    request's response as its own, with end code ``0x0000``. It is true now:
+    :meth:`aslmp.connection.Connection.retire_after_silent_exchange` closes the socket
+    and goes sticky ``FAILED``, and ``TcpTransport`` closes its own. ``0x1006`` -- the one
+    command that legitimately gets no answer -- is unaffected, because the CPU is
+    resetting and :meth:`RemoteControl.reset` closes the client immediately afterwards.
     """
 
     response_optional = True
@@ -478,6 +556,23 @@ class _SilentRawCommand(_RawCommand):
 # ========================================================================================
 # The client
 # ========================================================================================
+
+
+REMOTE_CONTROL_COMMANDS: Final[Mapping[int, str]] = {
+    RemoteRun.CODE: RemoteRun.NAME,
+    RemoteStop.CODE: RemoteStop.NAME,
+    RemotePause.CODE: RemotePause.NAME,
+    RemoteLatchClear.CODE: RemoteLatchClear.NAME,
+    RemoteReset.CODE: RemoteReset.NAME,
+}
+"""Every command code that can stop, start or clear a running machine, by name.
+
+Built from the command classes rather than written out, so a sixth remote-control command
+cannot be added to :mod:`aslmp.commands.remote` and quietly stay outside the interlock.
+It exists here, on the client, because ``allow_remote_control`` is a property of the
+client: a command class can refuse itself in ``validate()``, and the raw escape hatch is
+precisely the path where no command class gets to.
+"""
 
 
 _CODECS: Final[Mapping[str, Codec]] = {"binary": BINARY, "ascii": ASCII}
@@ -1391,8 +1486,9 @@ class Plc:
     async def write_bit(
         self, address: AddressLike, value: bool, /, *, verify: bool = False
     ) -> None:
-        """One bit device. ``0x1401`` in bit units."""
-        _written, tx = await self._run(WriteBits(address, (value,)), mutates=True)
+        """One bit device. ``0x1401`` in bit units. ``value`` is ``True`` or ``False``."""
+        checked = boolean(value, what=f"write_bit({address})")
+        _written, tx = await self._run(WriteBits(address, (checked,)), mutates=True)
         if verify:
             back = await self.read_bit(address)
             self._check(back, value, what=f"write_bit({address})")
@@ -1403,7 +1499,7 @@ class Plc:
         self, address: AddressLike, value: int, /, *, verify: bool = False
     ) -> None:
         """One register from a signed 16-bit integer. Never masked, never clamped."""
-        word = unsigned(value, bits=16, what=f"write_i16({address})")
+        word = unsigned(value, bits=16, what=f"write_i16({address})", signed_field=True)
         _written, tx = await self._run(WriteWords(address, (word,)), mutates=True)
         if verify:
             back = await self.read_i16(address)
@@ -1415,7 +1511,7 @@ class Plc:
         self, address: AddressLike, value: int, /, *, verify: bool = False
     ) -> None:
         """One register from an unsigned 16-bit integer."""
-        word = unsigned(value, bits=16, what=f"write_u16({address})")
+        word = unsigned(value, bits=16, what=f"write_u16({address})", signed_field=False)
         _written, tx = await self._run(WriteWords(address, (word,)), mutates=True)
         if verify:
             back = await self.read_u16(address)
@@ -1434,7 +1530,7 @@ class Plc:
     ) -> None:
         """Two registers from a signed 32-bit integer."""
         order = self._order(word_order)
-        words = _to_words(struct.pack("<i", _fits(value, signed_field=True, address=address)),
+        words = _to_words(struct.pack("<I", _fits(value, signed_field=True, address=address)),
                           order)
         _written, tx = await self._run(WriteWords(address, words), mutates=True)
         if verify:
@@ -1474,7 +1570,7 @@ class Plc:
     ) -> None:
         """Two registers from one IEEE-754 single, low word first."""
         order = self._order(word_order)
-        packed = struct.pack("<f", value)
+        packed = struct.pack("<f", real(value, bits=32, what=f"write_f32({address})"))
         _written, tx = await self._run(
             WriteWords(address, _to_words(packed, order)), mutates=True
         )
@@ -1496,7 +1592,8 @@ class Plc:
     ) -> None:
         """Four registers from one IEEE-754 double."""
         order = self._order(word_order)
-        words = _to_words(struct.pack("<d", value), order)
+        packed = struct.pack("<d", real(value, bits=64, what=f"write_f64({address})"))
+        words = _to_words(packed, order)
         _written, tx = await self._run(WriteWords(address, words), mutates=True)
         if verify:
             read_back = await self.read_f64(address, word_order=order)
@@ -1564,15 +1661,33 @@ class Plc:
 
     @mirrored
     async def write_words(self, address: AddressLike, values: Sequence[int], /) -> None:
-        """``len(values)`` consecutive registers."""
-        _written, tx = await self._run(WriteWords(address, tuple(values)), mutates=True)
-        return self._ack(len(values), tx)
+        """``len(values)`` consecutive registers.
+
+        A raw register names no type, so ``-1`` and ``65535`` are the same sixteen bits
+        and both are accepted; ``70000`` and ``1.5`` are not, and both raise
+        :class:`~aslmp.errors.SlmpValueRangeError` before anything is built.
+        """
+        checked = tuple(
+            unsigned(value, bits=16, what=f"write_words({address}) value {index}")
+            for index, value in enumerate(values)
+        )
+        _written, tx = await self._run(WriteWords(address, checked), mutates=True)
+        return self._ack(len(checked), tx)
 
     @mirrored
     async def write_bits(self, address: AddressLike, values: Sequence[bool], /) -> None:
-        """``len(values)`` consecutive bit devices."""
-        _written, tx = await self._run(WriteBits(address, tuple(values)), mutates=True)
-        return self._ack(len(values), tx)
+        """``len(values)`` consecutive bit devices. Each is ``True`` or ``False``, exactly.
+
+        ``[2]``, ``[-1]`` and ``["yes"]`` raise rather than all writing a 1: Python's
+        truthiness is not the PLC's, and a caller who passed the wrong element of a list
+        would otherwise never find out.
+        """
+        checked = tuple(
+            boolean(value, what=f"write_bits({address}) value {index}")
+            for index, value in enumerate(values)
+        )
+        _written, tx = await self._run(WriteBits(address, checked), mutates=True)
+        return self._ack(len(checked), tx)
 
     @mirrored
     async def write_f32_array(
@@ -1586,8 +1701,9 @@ class Plc:
         """``len(values)`` IEEE-754 singles into ``2 * len(values)`` registers."""
         order = self._order(word_order)
         words: list[int] = []
-        for value in values:
-            words.extend(_to_words(struct.pack("<f", value), order))
+        for index, value in enumerate(values):
+            checked = real(value, bits=32, what=f"write_f32_array({address}) value {index}")
+            words.extend(_to_words(struct.pack("<f", checked), order))
         _written, tx = await self._run(WriteWords(address, tuple(words)), mutates=True)
         return self._ack(len(words), tx)
 
@@ -1636,9 +1752,18 @@ class Plc:
         The budget is weighted, not flat: ``word x 12 + dword x 14 <= 1920`` on an FX5U
         (measured). A flat count is wrong in both directions -- 160 word points fit and
         138 double-word points do not.
+
+        Each value is held to the type **its own point names**: an ``i16`` point given
+        40000 raises rather than putting ``0x9C40`` on the wire for the PLC to read back
+        as ``-25536``, exactly as :meth:`write_i16` does. A ``u16`` point is the raw
+        register a point of that kind has always been, so ``-1`` is still its two's
+        complement there.
         """
-        _written, tx = await self._run(WriteRandom(tuple(writes)), mutates=True)
-        return self._ack(len(writes), tx)
+        checked = tuple(writes)
+        for index, item in enumerate(checked):
+            _check_point_value(item, index)
+        _written, tx = await self._run(WriteRandom(checked), mutates=True)
+        return self._ack(len(checked), tx)
 
     async def _read_random_split(self, points: tuple[RandomPoint, ...]) -> SplitReading:
         """Several ``0403``s. The caller opted in and gets a type that says so."""
@@ -1726,18 +1851,59 @@ class Plc:
             return _bind(self, block, base=base, allow_split=True)
         return _bind(self, block, base=base)
 
+    def _own_plan(self, plan: BlockPlan[B], what: str) -> BlockPlan[B]:
+        """Refuse a plan that is bound to a different client. Nothing is sent.
+
+        **Why refused rather than retargeted.** A bound plan is not a description of a
+        block; it is a prebuilt ``0403`` frame plus a compiled decoder, and both were
+        built from *one* client's profile, codec, spec format, frame type, route,
+        monitoring timer and identified model code. Re-deriving all of that against
+        ``self`` on every call is exactly the work the prebuilt plan exists to do once,
+        and sending it as it stands down another client's socket is worse: an FX5U and an
+        iQ-R both answer ``0x0000`` to the same bytes and mean different devices by them.
+        So there is no honest way to "use the receiver", and the mismatch is the bug.
+
+        Until this guard existed, ``self`` was unused: ``plc.read_block(plan)`` and
+        ``plc.write_block(plan, value)`` transacted on the client the plan was bound to,
+        whichever client they were called on. Verified on FX5U-32MT/DS fw 1.065 from this
+        host over TCP 5002 (2026-09-07): a ``Plc`` that had never been connected, pointed
+        at a host that does not exist, returned a populated block and reported a
+        successful write, while the bound client's counters moved and ``D100``/``D101``
+        on the real CPU changed to the values passed to the ghost. Writing to the wrong
+        PLC and returning success is the worst outcome this package has.
+        """
+        if plan.plc is self:
+            return plan
+        raise SlmpConfigurationError(
+            f"{what} was called on {self.name} with a plan bound to "
+            f"{plan.plc.name}. A bound plan is a prebuilt frame and a compiled decoder "
+            f"built from one client's profile, coding, frame type, route and identified "
+            f"CPU; it is not portable, and nothing here rebinds it on your behalf -- "
+            f"that would send bytes built for one CPU's device numbering to another, "
+            f"which both answer 0x0000 to. Nothing was sent. Call plan.read() on the "
+            f"plan itself, or bind the block against this client: "
+            f"{self.name}.bind({plan.layout.block_name})."
+        )
+
     async def read_block(self, plan: BlockPlan[B], /) -> B:
         """One ``0403`` from an already-bound plan: :meth:`BlockPlan.read`.
 
         Takes a :class:`~aslmp.blocks.plan.BlockPlan` and never a class, because binding
         on every cycle would rebuild and revalidate the frame every cycle, which is the
         whole cost the prebuilt plan exists to pay once.
+
+        The plan must be bound to **this** client; one bound to another raises
+        :class:`~aslmp.errors.SlmpConfigurationError` and sends nothing (:meth:`_own_plan`).
         """
-        return await plan.read()
+        return await self._own_plan(plan, "read_block()").read()
 
     async def write_block(self, plan: BlockPlan[B], value: B, /) -> None:
-        """One ``1402`` writing every field of ``value``: :meth:`BlockPlan.write_block`."""
-        await plan.write_block(value)
+        """One ``1402`` writing every field of ``value``: :meth:`BlockPlan.write_block`.
+
+        The plan must be bound to **this** client; one bound to another raises
+        :class:`~aslmp.errors.SlmpConfigurationError` and sends nothing (:meth:`_own_plan`).
+        """
+        await self._own_plan(plan, "write_block()").write_block(value)
 
     # ====================================================================================
     # Monitor (0801 / 0802) -- capability gated, NEVER emulated
@@ -1871,8 +2037,20 @@ class Plc:
 
         ``expect_response=False`` is overloaded to return ``None`` rather than widening
         the normal return type, for the same reason ``allow_split`` is: a caller who did
-        not ask for silence never has to narrow a union.
+        not ask for silence never has to narrow a union. It also **retires the connection**
+        -- see :meth:`Connection.retire_after_silent_exchange`.
+
+        **The one thing it does not bypass is the remote-control interlock.** ``0x1001``
+        through ``0x1006`` are refused here unless the client was built with
+        ``allow_remote_control=True``, exactly as :attr:`remote` refuses them. Validation
+        is a property of the *command* and the interlock is a property of the *client*, so
+        ``_RawCommand.validate()`` being a deliberate no-op cannot be the whole story:
+        before this check, ``plc.remote.run()`` raised and ``plc.raw_command(0x1001, 0)``
+        halted or started the same machine on the same client (verified on FX5U-32MT/DS
+        fw 1.065, 2026-09-07). An escape hatch for finding out what a CPU really does is
+        not an escape hatch from "this library can stop a running plant".
         """
+        self._require_interlock_for(command)
         if not expect_response:
             silent = _SilentRawCommand(command, subcommand, payload, mutates)
             return self._done(None, await self._run_silent(silent, mutates=mutates))
@@ -1880,6 +2058,22 @@ class Plc:
             _RawCommand(command, subcommand, payload, mutates), mutates=mutates
         )
         return self._done(response, tx)
+
+    def _require_interlock_for(self, command: int) -> None:
+        """Refuse a remote-control command code on a client that was not unlocked for one."""
+        if command not in REMOTE_CONTROL_COMMANDS or self._ctx.allow_remote_control:
+            return
+        raise SlmpConfigurationError(
+            f"raw_command(0x{command:04X}, ...) is "
+            f"{REMOTE_CONTROL_COMMANDS[command]}, and this client was not constructed "
+            f"with allow_remote_control=True. The interlock is a property of the client "
+            f"and not of the command, so bypassing command validation does not bypass "
+            f"it: this library can halt a plant over an unauthenticated cleartext "
+            f"socket. Nothing was sent. Use plc.remote, which also verifies the CPU "
+            f"actually reached the state it was asked for -- Mitsubishi documents "
+            f"Remote RUN with the switch in STOP as completing normally while the CPU "
+            f"does not enter RUN (SH(NA)-080956ENG-M p.131)."
+        )
 
 
 # ========================================================================================
@@ -2058,19 +2252,56 @@ class RemoteControl:
 # ========================================================================================
 
 
-def _fits(value: int, *, signed_field: bool, address: AddressLike) -> int:
-    """``value`` as a 32-bit field, refusing anything that does not fit.
+_POINT_DOMAINS: Final[Mapping[str, bool | None]] = {
+    "i16": True,
+    "i32": True,
+    "u16": None,
+    "u32": None,
+}
+"""Whether a point kind names a *signed* type, an unsigned one, or a raw register.
+
+``i16``/``i32`` name a signed type and are enforced as one. ``u16``/``u32`` are the kinds
+:meth:`RandomPoint.__str__` prints with no suffix at all, because they are what a register
+is when nobody has said otherwise: the union of the two renderings stays legal there, the
+way it does for :meth:`write_words`. ``f32`` is absent because it is checked by
+:func:`~aslmp.commands.base.real` instead, and ``bits`` because ``1402`` in word units
+cannot carry one (``RandomWrite`` refuses it at construction).
+"""
+
+
+def _check_point_value(write: RandomWrite, index: int) -> None:
+    """Hold one ``1402`` value to the type its own access point names. Sends nothing."""
+    kind = write.point.kind
+    what = f"write_random() value {index} at {write.point}"
+    if kind == "f32":
+        real(write.value, bits=32, what=what)
+        return
+    unsigned(
+        write.value,
+        bits=write.point.width.bits,
+        what=what,
+        signed_field=_POINT_DOMAINS.get(kind),
+    )
+
+
+def _fits(value: object, *, signed_field: bool, address: AddressLike) -> int:
+    """``value`` as the unsigned 32-bit field a 32-bit write puts on the wire.
+
+    Exactly :func:`~aslmp.commands.base.unsigned` at 32 bits, named here because the
+    address makes a better message than the point does. Returning the *wire* value rather
+    than the caller's is what lets both ``write_i32`` and ``write_u32`` pack ``"<I"``: the
+    two's complement of a negative signed value and its unsigned rendering are the same
+    four bytes, and one packing format is one fewer place the two can disagree.
 
     Never masked and never truncated: ``pymcprotocol`` writes ``0x1FFFF`` into a 16-bit
-    register as ``0xFFFF`` and reports success.
+    register as ``0xFFFF`` and reports success. ``write_i32(3_000_000_000)`` raises here
+    rather than reading back ``-1294967296``.
     """
-    low = -(1 << 31) if signed_field else 0
-    high = (1 << 31) - 1 if signed_field else (1 << 32) - 1
-    if low <= value <= high:
-        return value
-    raise SlmpConfigurationError(
-        f"writing {value} to {address} as a 32-bit field: the range is {low}..{high}. "
-        f"Nothing here masks, clamps or wraps."
+    return unsigned(
+        value,
+        bits=32,
+        what=f"writing to {address} as a 32-bit field",
+        signed_field=signed_field,
     )
 
 

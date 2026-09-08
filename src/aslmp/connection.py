@@ -420,6 +420,16 @@ class Txn:
         so it is not a general ``send``. Everything else must read its response: a
         request whose answer is left on the socket is how the *next* transaction reads
         the previous one's bytes as fresh data.
+
+        **The socket does not survive this call.** Whatever was sent, nothing read the
+        answer, so nothing can prove there is not one waiting; a connection kept in
+        service would hand those bytes to the next transaction as fresh data with end
+        code ``0x0000``, and on 3E there is no serial No. that would ever reveal it.
+        :meth:`Connection.retire_after_silent_exchange` therefore closes it and the
+        connection goes sticky ``FAILED``, recoverable only by an explicit
+        ``reopen(reason=...)``. For ``0x1006`` that costs nothing: the CPU is resetting
+        and the connection was going with it either way
+        (:meth:`aslmp.client.RemoteControl.reset` closes the client straight after).
         """
         self._slot.use()
         connection = self._conn
@@ -445,7 +455,9 @@ class Txn:
             await self._fail(exc, mutates)
         self._sent = True
         self._finished = True
-        return self._timing.build()
+        timing = self._timing.build()
+        await connection.retire_after_silent_exchange()
+        return timing
 
     def decoded(self) -> TransactionTiming:
         """Stamp ``decoded_at`` and return the final timing record."""
@@ -820,6 +832,45 @@ class Connection:
             f"reconnect raises immediately rather than waiting for one.",
             reason=self._state.value,
         )
+
+    async def retire_after_silent_exchange(self) -> None:
+        """Close the socket after a request whose response was deliberately never read.
+
+        The one connection-level consequence of ``expect_response=False``. Nothing
+        failed, so no failure is counted and no ``ConnectionFailed`` is emitted -- but the
+        socket is finished, because this process sent a request and did not read the
+        answer, and it has no way to know whether there is one queued behind it. Keeping
+        it ``READY`` is how the next transaction decodes the previous request's response
+        as its own, with end code ``0x0000`` and, on 3E, no serial No. to catch it.
+
+        The state is ``FAILED`` rather than ``CLOSED`` for one reason: ``FAILED`` is the
+        state an explicit ``reopen(reason=...)`` can leave, and ``CLOSED`` deliberately
+        cannot ("build a new one rather than resurrecting it"). A caller who used the
+        escape hatch on purpose gets to reconnect; nobody gets to keep transacting.
+
+        Idempotent, and never raises: :meth:`Transport.close` does not, and a connection
+        that is already ``CLOSED`` or ``FAILED`` is left where it is.
+        """
+        await self._transport.close()
+        if self._state in (ConnectionState.CLOSED, ConnectionState.FAILED):
+            return
+        self._state = ConnectionState.FAILED
+        self._info = None
+        self._counters.disconnects += 1
+        with contextlib.suppress(SlmpSinkError):
+            self._emit(
+                Disconnected(
+                    connection_id=self._connection_id,
+                    generation=self._generation,
+                    at=Nanos(self._clock()),
+                    reason=(
+                        "a request was sent with expect_response=False; the socket is "
+                        "retired rather than reused, because nothing read the answer "
+                        "and nothing can prove there is not one waiting"
+                    ),
+                    expected=True,
+                )
+            )
 
     async def note_failure(self, exc: BaseException, *, close: bool) -> None:
         """Count a failure and, if it touched the wire, go sticky ``FAILED``.

@@ -76,6 +76,8 @@ from aslmp.commands.base import (
     EncodeContext,
     WordOrder,
     expect_payload_len,
+    real,
+    unsigned,
 )
 from aslmp.commands.random import (
     AccessWidth,
@@ -106,7 +108,7 @@ from aslmp.wire.frames import request_body
 from aslmp.wire.raw import RawResponse
 
 if TYPE_CHECKING:  # the peer at layer 5; every use is behind a deferred annotation
-    from aslmp.client import Plc
+    from aslmp.client import Plc, PlcClockSource
 
 __all__ = [
     "BlockPlan",
@@ -171,7 +173,13 @@ class _Group:
     struct_code: str
     field: FieldPlan | None = None
     fold: BitFold | None = None
-    clock: bool = False
+    clock: PlcClockSource | None = None
+    """The caller's clock declaration, when this group is the PLC clock's point.
+
+    The declaration itself rather than a ``bool``, because the width, the ``struct`` code
+    and the decode of this group all come from it. A ``bool`` here was the whole of the
+    defect: it said *that* there was a clock and left *what it is* to a constant.
+    """
 
     @property
     def dword(self) -> bool:
@@ -183,8 +191,8 @@ class _Group:
         """What ``describe()`` and a budget refusal call this group."""
         if self.fold is not None:
             return f"bit window {self.fold.anchor_text}"
-        if self.clock:
-            return "plc_clock"
+        if self.clock is not None:
+            return self.clock.label
         return "?" if self.field is None else self.field.name
 
 
@@ -209,6 +217,7 @@ class _Reader:
         "_strings",
         "_struct",
         "_wire",
+        "clock_float",
         "clock_index",
         "dword_points",
         "groups",
@@ -295,9 +304,24 @@ class _Reader:
         bits_at: list[tuple[int, str, int]] = []
         bounded: list[tuple[int, str, float | None, float | None, Bounds, str, str]] = []
         clock: int | None = None
+        clock_float = False
         for index, group in enumerate(self.groups):
-            if group.clock:
+            if group.clock is not None:
                 clock = index
+                spec = group.clock.spec
+                clock_float = spec.python == "float"
+                if spec.bounds is not None:
+                    bounded.append(
+                        (
+                            index,
+                            group.clock.label,
+                            spec.bounds.minimum,
+                            spec.bounds.maximum,
+                            spec.bounds,
+                            str(_address(group.points[0])),
+                            spec.struct_code,
+                        )
+                    )
             elif group.fold is not None:
                 bits_at.extend((index, name, bit) for name, bit in group.fold.bits)
             elif group.field is None:  # pragma: no cover - a group is one of the three
@@ -326,6 +350,7 @@ class _Reader:
             tuple[int, str, float | None, float | None, Bounds, str, str], ...
         ] = tuple(bounded)
         self.clock_index: int | None = clock
+        self.clock_float: bool = clock_float
         wire_words = sum(point.words for point in points)
         if self._struct.size != 2 * wire_words:  # pragma: no cover - an invariant
             raise SlmpBlockLayoutError(
@@ -405,6 +430,33 @@ class _Reader:
                     address=where,
                     registers=_registers(value, code),
                 )
+
+    def clock_count(self, value: float) -> int:
+        """One decoded PLC-clock point as the integer count ``Transaction.plc_clock`` is.
+
+        The value arrived decoded **as the caller declared it** -- an ``f32`` clock is a
+        float here, not a bit pattern -- and a free-running counter is a count, so a float
+        one is truncated toward zero. That truncation is documented rather than silent: a
+        REAL scan counter incremented by ``1.0`` is integral at every value it takes until
+        it passes 2**24 and stops incrementing at all, which is what a declared
+        ``maximum`` is for.
+
+        A non-finite clock has no count and is refused rather than turned into one.
+        ``int(nan)`` raises ``ValueError`` and ``int(inf)`` raises ``OverflowError``,
+        neither of which is in the DESIGN section 3.1 tree, so both become
+        :class:`~aslmp.errors.SlmpPayloadShapeError`: the PLC answered 0x0000 and the
+        registers are the registers it sent, but they are not a clock.
+        """
+        try:
+            return int(value)
+        except (ValueError, OverflowError) as exc:
+            raise SlmpPayloadShapeError(
+                f"{self.summary.text}: the PLC clock decoded to {value!r}, which is not "
+                f"a count. The end code was 0x0000 and nothing was retried. A "
+                f"non-finite value from a register pair usually means the declared type "
+                f"is not the type the PLC program writes there; check it in GX Works3 "
+                f"under Label -> Global Label and pass it as PlcClockSource(kind=...)."
+            ) from exc
 
 
 def _registers(value: float, struct_code: str) -> tuple[int, ...]:
@@ -549,7 +601,9 @@ class _Bound(Generic[B]):
             )
             reader.fill(values, into)
             if reader.clock_index is not None:
-                tx = dataclasses.replace(tx, plc_clock=int(values[reader.clock_index]))
+                tx = dataclasses.replace(
+                    tx, plc_clock=reader.clock_count(values[reader.clock_index])
+                )
         plc._observe(tx)
         return tx
 
@@ -973,8 +1027,8 @@ def _refuse_out_of_range(field: FieldPlan, address: DeviceAddress, value: object
     own plausibility bound into "this block has no write template" -- a silent loss of
     the prebuilt path, reported as a refusal about something else entirely.
 
-    Type refusals are left to :func:`_as_int` and :func:`_as_float`, which say the right
-    thing about them; this only judges numbers.
+    Type refusals and width refusals are left to :func:`_in_width`, which says the right
+    thing about them; this only judges numbers against a range the caller *declared*.
     """
     limits = field.bounds
     if limits is None or isinstance(value, bool) or not isinstance(value, int | float):
@@ -998,20 +1052,6 @@ def _as_bool(value: object, name: str) -> bool:
     )
 
 
-def _as_int(value: object, name: str) -> int:
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    raise SlmpBlockLayoutError(f"field {name} takes an int, not {type(value).__name__}.")
-
-
-def _as_float(value: object, name: str) -> float:
-    if isinstance(value, int | float) and not isinstance(value, bool):
-        return float(value)
-    raise SlmpBlockLayoutError(
-        f"field {name} takes a real number, not {type(value).__name__}."
-    )
-
-
 def _write_points(
     address: DeviceAddress, field: FieldPlan, value: object
 ) -> list[RandomWrite]:
@@ -1027,7 +1067,7 @@ def _write_points(
             for index in range(spec.words)
         ]
     if isinstance(spec, NumberSpec) and spec.words == 4:
-        packed = struct.pack("<d", _as_float(value, field.name))
+        packed = struct.pack("<d", _in_width(spec, value, field.name))
         return [
             RandomWrite(
                 RandomPoint(_offset(address, 2 * half), AccessWidth.DWORD, "u32"),
@@ -1038,11 +1078,58 @@ def _write_points(
     if isinstance(spec, NumberSpec):
         width = AccessWidth.DWORD if spec.dword else AccessWidth.WORD
         point = RandomPoint(address, width, spec.kind)
-        if spec.kind == "f32":
-            return [RandomWrite(point, _as_float(value, field.name))]
-        return [RandomWrite(point, _as_int(value, field.name))]
+        return [RandomWrite(point, _in_width(spec, value, field.name))]
     raise SlmpBlockLayoutError(  # pragma: no cover - a BitSpec never reaches here
         f"field {field.name} is not a register field and cannot be written in word units"
+    )
+
+
+def _in_width(spec: NumberSpec, value: object, name: str) -> int | float:
+    """One field's value, held to **its own declared type** before anything is built.
+
+    The declaration is the contract in both directions. A field declared ``I16`` and
+    given ``40000`` used to reach ``RandomWrite``, where the shared 16-bit helper
+    accepted the union of the signed and unsigned ranges and masked -- so ``40000``
+    became ``0x9C40`` and read back as ``-25536``, with end code ``0x0000`` at every
+    step. A field declared ``F32`` and given ``1e39`` reached ``struct.pack`` and raised
+    a bare ``OverflowError``, which is not in the DESIGN section 3.1 tree at all.
+
+    Both are now :class:`~aslmp.errors.SlmpValueRangeError` before a byte is built, from
+    the same two helpers every other write in this package uses. Declared
+    :class:`~aslmp.blocks.fields.Bounds` are a *narrower* promise checked separately by
+    :func:`_refuse_out_of_range`; this is the width the field cannot physically exceed,
+    and it is checked even when the caller declared no bounds at all.
+    """
+    what = f"field {name} declared {spec.label}"
+    if spec.python == "float":
+        return real(_as_float(value, name), bits=_REAL_BITS[spec.struct_code], what=what)
+    integer = _as_int(value, name)
+    # For the range only: the *checked* value is the caller's own, so that the refusal a
+    # bound plan prints and the RandomWrite a report shows both say -1 rather than 65535.
+    unsigned(
+        integer,
+        bits=16 * min(spec.words, 2),
+        what=what,
+        signed_field=spec.struct_code in ("h", "i"),
+    )
+    return integer
+
+
+_REAL_BITS: Final[Mapping[str, Literal[32, 64]]] = {"f": 32, "d": 64}
+"""Which IEEE-754 width each float field's ``struct`` code is, for :func:`_in_width`."""
+
+
+def _as_int(value: object, name: str) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    raise SlmpBlockLayoutError(f"field {name} takes an int, not {type(value).__name__}.")
+
+
+def _as_float(value: object, name: str) -> float:
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    raise SlmpBlockLayoutError(
+        f"field {name} takes a real number, not {type(value).__name__}."
     )
 
 
@@ -1344,13 +1431,22 @@ def _groups(
         out.append(_Group(points=points, struct_code=spec.struct_code, field=field))
     clock = plc.plc_clock
     if clock is not None:
+        # The width, the point kind and the struct code all come from the caller's own
+        # declaration. They used to be the constants DWORD/"u32"/"I", which on a bench
+        # whose D8 is a REAL published the float's bit pattern as a monotonic, plausible
+        # and wrong counter with end code 0x0000 -- see PlcClockSource.
+        spec = clock.spec
         out.append(
             _Group(
                 points=(
-                    RandomPoint(ctx.address(clock.address), AccessWidth.DWORD, "u32"),
+                    RandomPoint(
+                        ctx.address(clock.address),
+                        AccessWidth.DWORD if spec.dword else AccessWidth.WORD,
+                        spec.kind,
+                    ),
                 ),
-                struct_code="I",
-                clock=True,
+                struct_code=spec.struct_code,
+                clock=clock,
             )
         )
     return tuple(out)

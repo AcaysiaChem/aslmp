@@ -338,6 +338,13 @@ class TcpTransport:
         ``correlation`` is accepted and ignored: TCP is a stream with one message in
         flight, so the response is the answer to the request by construction. It is UDP
         that needs it.
+
+        ``expect_response=False`` writes and then **closes the socket**. It is not a
+        ``send``: this transport has none, and one call that wrote without reading would
+        be one, with the desynchronised socket left in service afterwards.
+        :class:`aslmp.connection.Connection` retires the connection to ``FAILED`` on the
+        same path, so the two agree; closing here is what makes the transport itself
+        unusable rather than merely unused.
         """
         sock = self._require_open()
         if self._busy:
@@ -353,6 +360,13 @@ class TcpTransport:
             sent = await self._send_all(sock, payload, deadline)
             timing.sent()
             if not expect_response:
+                # This socket is finished. The request went out and nothing will read
+                # the answer, so nothing here can prove there is not one on its way; a
+                # socket kept open hands those bytes to the next exchange as fresh data
+                # with end code 0x0000, and 3E has no serial No. that would reveal it.
+                # Closing is the same decision the read loop makes for any failure
+                # mid-message, and it is why this transport has no `send`.
+                await self.close()
                 return WireResult(
                     sent=True, responded=False, bytes_sent=sent, bytes_received=0, chunks=()
                 )
