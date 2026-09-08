@@ -42,7 +42,6 @@ import pytest
 
 from aslmp import (
     F32,
-    U32,
     Concurrency,
     FrameType,
     Plc,
@@ -238,7 +237,7 @@ class LoopState(PlcBlock):
     process_value: F32
     output: F32
     error: F32
-    scan: U32
+    scan: F32  # a REAL, not a counter. See test_declaring_scan_as_u32_reads_a_bit_pattern.
 
 
 async def test_one_bound_block_read_beats_five_batch_reads_and_is_one_snapshot() -> None:
@@ -266,9 +265,8 @@ async def test_one_bound_block_read_beats_five_batch_reads_and_is_one_snapshot()
         for _ in range(9):
             started = time.perf_counter_ns()
             wires = 0.0
-            for address in (SP, PV, MV, ERR):
+            for address in (SP, PV, MV, ERR, SCAN):
                 wires += (await plc.timed.read_f32(address)).tx.timing.wire_ms
-            wires += (await plc.timed.read_u32(SCAN)).tx.timing.wire_ms
             separate_wall.append((time.perf_counter_ns() - started) / 1e6)
             separate_wire.append(wires)
 
@@ -293,6 +291,48 @@ async def test_one_bound_block_read_beats_five_batch_reads_and_is_one_snapshot()
             await plc.read_f32(ERR),
         )
         assert state.scan > 0
+
+
+async def test_declaring_scan_as_u32_reads_a_bit_pattern_and_nothing_says_so() -> None:
+    """The one silent-wrong-data path the wire cannot close, pinned as a regression.
+
+    ``IO_Scan`` is a ``REAL`` -- the PLC's own ST does ``IO_Scan := IO_Scan + 1.0`` and
+    ``IF IO_Scan > 1.0E7``. Read it as ``u32`` and you get the float's bit pattern: a
+    plausible-looking integer, end code ``0x0000``, no error anywhere. A D register carries
+    no type on the wire, so the library cannot detect this and must not pretend to.
+
+    What makes it genuinely dangerous, and what this test exists to pin: IEEE-754 bit
+    patterns rise monotonically for positive floats, so the wrong reading still *increases*
+    every cycle. A naive "is the counter advancing?" assertion passes. Ours did, until the
+    rate was checked against the documented ~1024 scans/s.
+    """
+    async with bench() as plc:
+        first_f32 = await plc.read_f32(SCAN)
+        first_u32 = await plc.read_u32(SCAN)
+        await asyncio.sleep(2.0)
+        second_f32 = await plc.read_f32(SCAN)
+        second_u32 = await plc.read_u32(SCAN)
+
+        as_real = second_f32 - first_f32
+        as_uint = second_u32 - first_u32
+        expected = 1024 * 2.0  # the CPU's measured scan rate over the sleep
+
+        # Both readings rise. Only one of them is the scan count.
+        assert as_real > 0 and as_uint > 0, "both readings advance -- that is the trap"
+        assert 0.5 < as_real / expected < 2.0, "the f32 reading tracks the real scan rate"
+        assert not 0.5 < as_uint / expected < 2.0, (
+            f"the u32 reading advanced by {as_uint:,} over 2 s against an expected "
+            f"~{expected:,.0f}. If this ever falls in range, IO_Scan's type in the PLC "
+            f"program has changed and this test's premise is stale -- check the global "
+            f"label in GX Works3 before editing anything here."
+        )
+        measured(
+            "IO_Scan read as the right type and the wrong one",
+            as_f32_delta=round(as_real, 1),
+            as_u32_delta=as_uint,
+            expected_delta=expected,
+            u32_wrong_by=f"{as_uint / expected:.1f}x",
+        )
 
 
 # ========================================================================================

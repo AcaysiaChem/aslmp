@@ -56,6 +56,9 @@ UNIFORM_PACKAGES: dict[str, float] = {
 
 EXACT_MODULES: dict[str, float] = {
     "aslmp": 9.0,
+    # `python -m aslmp`. Sits with the CLI it delegates to, and only ever delegates:
+    # anything heavier here would be imported by that command line for no reason.
+    "aslmp.__main__": 9.0,
     "aslmp._version": 0.0,
     "aslmp.profile": 1.0,
     "aslmp.blocks": 5.0,
@@ -87,6 +90,9 @@ PEER_GROUPS: tuple[frozenset[str], ...] = (
     frozenset({"aslmp.connection", "aslmp.results"}),
     frozenset({"aslmp.client", "aslmp.timed", "aslmp.blocks.plan"}),
     frozenset({"aslmp.health", "aslmp.resilience", "aslmp.entries", "aslmp.loop"}),
+    # `python -m aslmp` delegates to the console script's entry point. Same layer, two
+    # packages, and the edge runs one way only -- aslmp.tools must never import it back.
+    frozenset({"aslmp.__main__", "aslmp.tools.__main__"}),
 )
 
 TESTING_PACKAGE = "aslmp.testing"
