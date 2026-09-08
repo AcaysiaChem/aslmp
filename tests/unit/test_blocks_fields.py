@@ -326,3 +326,49 @@ def test_the_implausible_value_finding_names_the_cpu_the_firmware_and_the_number
 def test_the_string_word_count_cites_a_manual_and_a_revision() -> None:
     assert STRING_WORDS.provenance is Provenance.MANUAL
     assert STRING_WORDS.manual and STRING_WORDS.revision and STRING_WORDS.section
+
+
+def test_a_string_length_is_bytes_and_a_double_byte_codec_is_refused_not_truncated() -> None:
+    """``Str(length=n)`` reserves n BYTES, and the two units differ for shift_jis.
+
+    The word "characters" survived in this module longer than anywhere else in the package
+    because it is correct for ``ascii``, which every example uses. It is wrong for any
+    double-byte codec: ``Str(length=4, encoding="shift_jis")`` holds two Japanese
+    characters, not four.
+
+    What makes this a naming defect rather than a wrong-data one -- and the reason it is
+    pinned here rather than fixed by widening the field -- is the second half: the write
+    path refuses the overflow and says so. Nothing is truncated, so a recipe name cannot be
+    silently cut in half on its way to the plant.
+
+    The docstring assertion checks the FIRST LINE only. An earlier version of this test
+    looked for "BYTES" anywhere in the docstring, and passed after the summary line was
+    reverted to "characters" because the word still appeared further down -- a test that
+    could not fail, which is the defect this whole file exists to prevent.
+    """
+    from aslmp.blocks.fields import StringSpec, string_words
+    from aslmp.blocks.plan import _string_bytes
+
+    spec = StringSpec(length=4, encoding="shift_jis")
+    capacity = 2 * spec.words - 1
+    assert (spec.words, capacity) == (3, 5), "three registers, minus the NUL byte"
+
+    # A single-byte codec is where the two units coincide, which is why this went unnoticed.
+    assert len(_string_bytes("ABCD", "name", spec)) == 2 * spec.words
+
+    two_japanese = "あい"
+    assert len(two_japanese.encode("shift_jis")) == 4 <= capacity
+    assert len(_string_bytes(two_japanese, "name", spec)) == 2 * spec.words
+
+    four_japanese = "あいうえ"
+    assert len(four_japanese.encode("shift_jis")) == 8 > capacity
+    with pytest.raises(SlmpBlockLayoutError, match="capacity is in BYTES"):
+        _string_bytes(four_japanese, "name", spec)
+
+    # "characters" plural is the UNIT. "character-string" is the field's type name and
+    # is correct MELSEC vocabulary, so the check is deliberately on the plural.
+    docs = (("StringSpec", StringSpec.__doc__), ("string_words", string_words.__doc__))
+    for what, doc in docs:
+        summary = (doc or "").strip().splitlines()[0].lower()
+        assert "byte" in summary, f"{what} summary must name the unit: {summary!r}"
+        assert "characters" not in summary, f"{what} summary still says characters"

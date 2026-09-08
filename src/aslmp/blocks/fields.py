@@ -149,8 +149,8 @@ STRING_WORDS: Final = Citation(
     revision="K",
     section="section 4.2 p.69",
     note=(
-        "A MELSEC character string occupies two characters per register and is "
-        "terminated by a NUL, so n declared characters need (n + 2) // 2 registers -- "
+        "A MELSEC character string occupies two BYTES per register and is "
+        "terminated by a NUL, so n declared bytes need (n + 2) // 2 registers -- "
         "the terminator's own register included. A block that read only ceil(n/2) "
         "registers would return the string with its terminator missing whenever the "
         "declared length is even, and the PLC program's own $MOV wrote one."
@@ -611,7 +611,14 @@ class BitSpec:
 
 @dataclass(frozen=True, slots=True)
 class StringSpec:
-    """One character-string field: ``length`` characters plus the NUL word.
+    """One character-string field: ``length`` BYTES of capacity plus the NUL word.
+
+    ``length`` is a byte count, not a character count, and the two are equal only for a
+    single-byte codec. Declaring ``Str(length=4, encoding="shift_jis")`` reserves capacity
+    for four BYTES -- two Japanese characters -- and a five-byte string is refused at write
+    time rather than truncated. The word "characters" survived here longer than anywhere
+    else in the package precisely because it is correct for ``ascii``, which is what every
+    example uses.
 
     ``encoding`` is checked here, at class-definition time, rather than at the first
     decode of a live response. A block whose declared encoding does not exist is a
@@ -627,12 +634,12 @@ class StringSpec:
     def __post_init__(self) -> None:
         if not isinstance(self.length, int) or isinstance(self.length, bool):
             raise SlmpBlockLayoutError(
-                f"Str(length=...) is a count of characters, not "
+                f"Str(length=...) is a count of bytes, not "
                 f"{type(self.length).__name__}."
             )
         if self.length < 1:
             raise SlmpBlockLayoutError(
-                f"Str(length={self.length}) has no characters in it. A zero-length "
+                f"Str(length={self.length}) has no bytes in it. A zero-length "
                 f"string field would still cost the NUL register and decode to '' "
                 f"forever; declare the field you mean or leave it out."
             )
@@ -671,17 +678,17 @@ FieldSpec = NumberSpec | BitSpec | StringSpec
 
 
 def string_words(length: int) -> int:
-    """Registers ``length`` characters need, **including the NUL word**.
+    """Registers ``length`` BYTES need, **including the NUL word**.
 
-    ``(length + 2) // 2``: two characters per register plus the terminator, which needs
+    ``(length + 2) // 2``: two bytes per register plus the terminator, which needs
     a register of its own whenever the declared length is even (:data:`STRING_WORDS`).
     Deliberately one register more than :meth:`aslmp.client.Plc.read_str` reads for the
-    same ``length``: that method returns exactly the characters asked for, while a block
-    field is a declaration of what the PLC program *stores* there.
+    same ``length``: that method reads exactly the bytes asked for, while a block field
+    is a declaration of what the PLC program *stores* there, terminator included.
     """
     if not isinstance(length, int) or isinstance(length, bool) or length < 1:
         raise SlmpBlockLayoutError(
-            f"a string length is a positive count of characters, not {length!r}."
+            f"a string length is a positive count of bytes, not {length!r}."
         )
     return (length + 2) // 2
 
@@ -894,7 +901,8 @@ def Str(  # noqa: N802 - it names the type it declares, beside F32/I32/U16
 ) -> Any:
     """Declare a character-string field: ``name: str = Str(length=8)``.
 
-    ``length`` is characters, and the field occupies ``(length + 2) // 2`` registers --
+    ``length`` is BYTES -- equal to the character count only for a single-byte codec --
+    and the field occupies ``(length + 2) // 2`` registers,
     the NUL word included (:data:`STRING_WORDS`). ``address`` is the same override
     :func:`at` gives a numeric field; the two are one keyword rather than two helpers
     because a string field needs both facts and ``at(Str(...))`` would read as an
