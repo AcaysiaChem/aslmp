@@ -53,7 +53,7 @@ from __future__ import annotations
 import enum
 import struct
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Literal, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Final, Literal, TypeAlias, TypeVar
 
 from aslmp.commands.base import (
     AddressLike,
@@ -77,7 +77,7 @@ from aslmp.wire.codec import Codec, SpecFormat, Unit
 from aslmp.wire.devicetable import DeviceType
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 __all__ = [
     "MAX_POINT_COUNT_FIELD",
@@ -204,6 +204,28 @@ _WORD_KINDS: frozenset[str] = frozenset({"u16", "i16", "bits"})
 _DWORD_KINDS: frozenset[str] = frozenset({"u32", "i32", "f32"})
 _WRITE_KINDS: frozenset[str] = frozenset({"u16", "i16", "u32", "i32", "f32"})
 
+_POINT_DOMAINS: Final[Mapping[PointKind, bool | None]] = {
+    "i16": True,
+    "i32": True,
+    "u16": None,
+    "u32": None,
+    "f32": None,
+    "bits": None,
+}
+"""The integer domain each ``kind`` names, in :func:`~aslmp.commands.base.unsigned`'s
+vocabulary. One table, read by :attr:`RandomPoint.signed_field`.
+
+``i16``/``i32`` name a signed type and are enforced as one. ``u16``/``u32`` are the kinds
+:meth:`RandomPoint.__str__` prints with **no suffix at all**, because they are what a
+register is when nobody has said otherwise: the union of the two renderings stays legal
+there, exactly as it does for :meth:`~aslmp.client.Plc.write_words`. ``f32`` and ``bits``
+are ``None`` because they never reach ``unsigned()`` -- an f32 point is checked by
+:func:`~aslmp.commands.base.real` and packed through ``struct``, and a ``bits`` point
+cannot be written by ``1402`` in word units at all (:class:`RandomWrite` refuses it at
+construction). They are in the table rather than absent so that a lookup here is a total
+function: a ``.get()`` with a permissive fallback is how a new kind would silently
+inherit the union."""
+
 
 class AccessWidth(enum.Enum):
     """Whether one access point is one word or two consecutive words.
@@ -269,6 +291,17 @@ class RandomPoint:
     def words(self) -> int:
         """How many 16-bit words this point contributes to the response."""
         return self.width.words
+
+    @property
+    def signed_field(self) -> bool | None:
+        """This point's declared integer domain, for
+        :func:`~aslmp.commands.base.unsigned` (:data:`_POINT_DOMAINS`).
+
+        A point carries its own type, so a write through it is a write to a *named*
+        type, not to a raw register -- which is the whole of the fix in
+        :meth:`RandomWrite.wire_value`.
+        """
+        return _POINT_DOMAINS[self.kind]
 
     def __str__(self) -> str:
         suffix = "" if self.kind in ("u16", "u32") else f":{self.kind}"
@@ -554,11 +587,26 @@ class RandomWrite:
             )
 
     def wire_value(self) -> int:
-        """The unsigned 16- or 32-bit field this write puts on the wire."""
+        """The unsigned 16- or 32-bit field this write puts on the wire.
+
+        **The point's own ``kind`` is the declared type and is enforced here.** This
+        method used to call the 16/32-bit helper with no declared domain at all, so
+        ``RandomWrite(word('D100', kind='i16'), 40000).wire_value()`` returned
+        ``0x9C40`` -- 40000 masked into a field the caller had just said was signed,
+        reading back as ``-25536`` with end code ``0x0000``.
+        :meth:`~aslmp.client.Plc.write_random` refused it one layer up, so the masking
+        only ever ran for a caller who had built the command directly; a refusal that
+        depends on which door you came through is not a refusal.
+        """
         bits = self.point.width.bits
         if self.point.kind == "f32":
             return int(struct.unpack("<I", struct.pack("<f", float(self.value)))[0])
-        return unsigned(int(self.value), bits=bits, what=f"write_random({self.point})")
+        return unsigned(
+            int(self.value),
+            bits=bits,
+            what=f"write_random({self.point})",
+            signed_field=self.point.signed_field,
+        )
 
 
 @dataclass(frozen=True, slots=True)

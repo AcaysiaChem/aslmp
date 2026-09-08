@@ -14,6 +14,8 @@ The tests here prove the check fires.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from aslmp.commands import COMMANDS, Command, EncodeContext, ReadWords, SelfTest
@@ -251,10 +253,26 @@ def test_the_subcommand_is_derived_from_unit_and_spec() -> None:
 
 
 def test_unsigned_refuses_rather_than_masking() -> None:
-    assert unsigned(-1, bits=16, what="x") == 0xFFFF
-    assert unsigned(0xFFFF, bits=16, what="x") == 0xFFFF
+    assert unsigned(-1, bits=16, what="x", signed_field=None) == 0xFFFF
+    assert unsigned(0xFFFF, bits=16, what="x", signed_field=None) == 0xFFFF
     with pytest.raises(SlmpValueRangeError, match="does not fit"):
-        unsigned(0x10000, bits=16, what="x")
+        unsigned(0x10000, bits=16, what="x", signed_field=None)
+
+
+def test_unsigned_has_no_default_domain_so_a_call_site_cannot_forget_one() -> None:
+    """The permissive union must be typed out, not inherited by omission.
+
+    ``signed_field`` spent one revision defaulting to ``None``, which made enforcement
+    opt-in per call site: ``RandomWrite.wire_value`` forgot, and a point declared
+    ``kind='i16'`` masked 40000 to 0x9C40 exactly as before the fix. There is no value
+    that is safe as a default for a signed field, an unsigned field and a raw register
+    at once, so the parameter is required and this test holds the signature.
+    """
+    parameter = inspect.signature(unsigned).parameters["signed_field"]
+    assert parameter.default is inspect.Parameter.empty
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    with pytest.raises(TypeError, match="signed_field"):
+        unsigned(1, bits=16, what="x")  # type: ignore[call-arg]
 
 
 def test_a_value_outside_the_field_is_a_value_range_error_not_a_configuration_error() -> None:
@@ -263,7 +281,7 @@ def test_a_value_outside_the_field_is_a_value_range_error_not_a_configuration_er
     mistakes with different fixes, and before this the datum was reported as the
     configuration."""
     with pytest.raises(SlmpValueRangeError):
-        unsigned(0x10000, bits=16, what="x")
+        unsigned(0x10000, bits=16, what="x", signed_field=None)
     assert issubclass(SlmpValueRangeError, SlmpUsageError)
     assert not issubclass(SlmpValueRangeError, SlmpConfigurationError)
 

@@ -75,6 +75,7 @@ from aslmp.commands.base import (
     CommandSummary,
     EncodeContext,
     WordOrder,
+    encoded,
     expect_payload_len,
     real,
     unsigned,
@@ -1134,13 +1135,23 @@ def _as_float(value: object, name: str) -> float:
 
 
 def _string_bytes(value: object, name: str, spec: StringSpec) -> bytes:
-    """A string field's registers, NUL-padded, refusing anything that does not fit."""
+    """A string field's registers, NUL-padded, refusing anything that does not fit.
+
+    The non-``str`` case is refused here rather than by
+    :func:`~aslmp.commands.base.encoded` only so that the message can name the field and
+    its declared ``Str(...)`` width; the encode itself goes through that helper, because
+    ``value.encode(spec.encoding)`` raises ``UnicodeEncodeError`` for a character the
+    declared codec cannot carry and ``LookupError`` for a codec name that does not
+    exist, and neither is in the DESIGN section 3.1 tree a caller catches.
+    """
     if not isinstance(value, str):
         raise SlmpBlockLayoutError(
             f"field {name} is a Str({spec.length}) and takes a str, not "
             f"{type(value).__name__}."
         )
-    raw = value.encode(spec.encoding)
+    raw = encoded(
+        value, encoding=spec.encoding, what=f"field {name} declared Str({spec.length})"
+    )
     if len(raw) > 2 * spec.words - 1:
         raise SlmpBlockLayoutError(
             f"field {name} holds {spec.length} characters plus a NUL terminator "

@@ -43,6 +43,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from aslmp.profile import CpuProfile
 
 __all__ = [
+    "BENCH_SCAN_STEP",
+    "BENCH_SCAN_WRAP",
     "AbsentDeviceError",
     "DeviceMemory",
     "MemoryRange",
@@ -56,6 +58,21 @@ __all__ = [
 WORD_MASK: Final = 0xFFFF
 """Every device word is 16 bits. A value outside it is a bug in the dispatcher, not a
 datum to be masked into range."""
+
+BENCH_SCAN_STEP: Final = 1.0
+"""What the bench CPU adds to ``IO_Scan`` each scan: its ST is ``IO_Scan := IO_Scan + 1.0``.
+
+A ``float`` and not an ``int``, because ``IO_Scan`` is declared ``REAL`` in that program
+(FX5U-32MT/DS fw 1.065 at 192.168.10.250, read out of GX Works3 2026-09-07)."""
+
+BENCH_SCAN_WRAP: Final = 1.0e7
+"""Where the bench CPU's own ST resets ``IO_Scan``: ``IF IO_Scan > 1.0E7``.
+
+Not a protocol constant and not a manual figure -- it is one line of the program running
+on that CPU, and it is here so the simulator's counter has the same range the silicon's
+does. Every value below it is an *exact* single: an IEEE-754 ``f32``'s ulp is 1.0 across
+``[2**23, 2**24)`` and finer below, and ``1.0e7 < 2**24``, so adding
+:data:`BENCH_SCAN_STEP` never loses a count anywhere in this register's range."""
 
 
 class SimulatorMemoryError(Exception):
@@ -392,15 +409,58 @@ class DeviceMemory:
         self.set_u32(device, index, int(struct.unpack("<I", struct.pack("<f", value))[0]))
 
     def bump_u32(self, device: str, index: int, step: int = 1) -> int:
-        """Advance a free-running 32-bit counter and return its new value.
+        """Advance an **integer** double-word counter and return its new value.
 
-        The bench CPU keeps a scan counter at ``D8``/``D9`` at roughly 1024 scans per
-        second. A simulator whose registers never change lets a test pass while reading
-        a stale value, which is the exact failure this library forbids.
+        For a counter the CPU's own program declares as a ``DWORD``/``DINT``: the value
+        wraps at ``0xFFFFFFFF`` because that is what a 32-bit integer does.
+
+        **This is not the bench's D8.** ``IO_Scan`` on the FX5U-32MT/DS at
+        192.168.10.250 is a ``REAL``; :meth:`bump_f32` is what models it. Reaching for
+        this method because a counter "is really an integer" is precisely how this
+        library came to publish a float's bit pattern as a scan count, and how the
+        simulator agreed with it in ~4100 tests: the oracle had the same bug as the code
+        it was checking. Pick the one the silicon uses, not the one the value looks like.
         """
         value = (self.get_u32(device, index) + step) & 0xFFFFFFFF
         self.set_u32(device, index, value)
         return value
+
+    def bump_f32(
+        self,
+        device: str,
+        index: int,
+        step: float = BENCH_SCAN_STEP,
+        *,
+        wrap_above: float | None = BENCH_SCAN_WRAP,
+        wrap_to: float = 0.0,
+    ) -> float:
+        """Advance a **floating-point** free-running counter and return its new value.
+
+        This is the bench CPU's ``D8``/``D9``. ``IO_Scan`` there is a ``REAL`` and the
+        program's own two lines are ``IO_Scan := IO_Scan + 1.0`` and
+        ``IF IO_Scan > 1.0E7`` (FX5U-32MT/DS fw 1.065 at 192.168.10.250, 2026-09-07),
+        which is exactly :data:`BENCH_SCAN_STEP` and :data:`BENCH_SCAN_WRAP`.
+
+        Modelling that register as an integer double word is a test that cannot fail: a
+        client decoding ``D8`` as ``u32`` reads the float's bit pattern, gets a
+        plausible rising number and end code ``0x0000``, and a simulator holding a real
+        integer there hands it the number it expected. Holding an ``f32`` here is what
+        makes the wrong declaration produce a wrong answer in a test.
+
+        ``wrap_above`` is the ST's own threshold; pass ``None`` for a counter that only
+        climbs. ``wrap_to`` is what the simulator resumes from and is a **choice, not a
+        measurement** -- 1.0e7 counts at the measured 1018 scans/s is about 2.7 hours, so
+        the reset has never been seen on a wire. No test may assert the value the counter
+        resumes from; assert that it dropped.
+
+        Returns the value as stored, i.e. after the round trip through the register pair,
+        so the simulator never reports a count its own memory does not hold.
+        """
+        value = self.get_f32(device, index) + step
+        if wrap_above is not None and value > wrap_above:
+            value = wrap_to
+        self.set_f32(device, index, value)
+        return self.get_f32(device, index)
 
     # -- snapshot / restore --------------------------------------------------------
 

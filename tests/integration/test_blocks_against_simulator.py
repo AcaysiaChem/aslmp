@@ -350,7 +350,7 @@ async def test_a_plan_refuses_to_resume_into_a_different_cpu(
 async def test_a_configured_plc_clock_rides_inside_the_same_snapshot() -> None:
     """The only way to tell "the network was slow" from "the CPU did not scan"."""
     async with bench() as simulator:
-        client = client_for(simulator, plc_clock=PlcClockSource("D8"))
+        client = client_for(simulator, plc_clock=PlcClockSource("D8", kind="u32"))
         async with client as plc:
             load_bench_values(simulator)
             plan = bind(plc, LoopState)

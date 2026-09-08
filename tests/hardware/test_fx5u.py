@@ -10,8 +10,14 @@ Gated on ``ASLMP_TEST_HOST``; marked ``hardware``; never run in CI::
 **The bench.** FX5U-32MT/DS firmware 1.065 at 192.168.10.250, in RUN with no physical I/O
 wired, idling at **1018 scans/s** -- D8 read as ``f32`` over 1 s, 5 s and 10 s windows,
 2026-09-07, from the laptop at 192.168.10.41 over Wi-Fi, all three agreeing to 0.4 %.
-Earlier notes say ~1024 and ~1029; the spread is the CPU's, the window's and (at large
-counter values, where an ``f32``'s ulp reaches 128) the register's own resolution.
+Earlier notes say ~1024 and ~1029; the 1 % spread is **measurement conditions** -- the
+CPU's own scan-time jitter, the length of the window and the Wi-Fi round trips inside it.
+It is *not* the register's resolution, and an earlier draft of this docstring said it was,
+on the arithmetic that "an ``f32``'s ulp reaches 128 at large counter values". That is
+wrong here twice over: ``IO_Scan`` wraps above 1.0e7 (``IF IO_Scan > 1.0E7`` in the CPU's
+own ST), and an IEEE-754 single's ulp is exactly 1.0 across ``[2**23, 2**24)`` and finer
+below, so across this register's entire range every count is exact and ``+ 1.0`` never
+loses one. An ulp of 128 needs a value above ``2**30``, roughly 107 times the wrap.
 
 Six configured SLMP connection entries: TCP 5000 (in use by other
 tooling -- not touched here), TCP 5002/5003/5004, and two UDP entries, both of which are

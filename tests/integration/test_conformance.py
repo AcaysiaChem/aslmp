@@ -1,10 +1,12 @@
 """The conformance suite, end to end, and the one test the architecture rests on.
 
-Three things happen in this file.
+Four things happen in this file.
 
 1. The shipped suite is run against every target, over TCP and over UDP, and must come
-   back clean. Nothing here imports ``aslmp.transport``: the suite is its own client, so
-   a transport bug is visible rather than cancelled out.
+   back clean. The suite is its own client -- ``run_conformance`` and ``TcpExchange``
+   reach ``aslmp.transport`` from nowhere, and ``aslmp.testing`` is forbidden to import
+   it at all (DESIGN section 4.11) -- so a transport bug is visible here rather than
+   cancelled out by both sides sharing it.
 2. The two reports are diffed. Running the same questions against ``PEDANTIC`` and
    against ``FX5U_32MT_DS`` produces, empirically, the same list of divergences that
    :func:`~aslmp.testing.targets.diff_targets` states declaratively -- and a test asserts
@@ -15,6 +17,11 @@ Three things happen in this file.
    ``0x0000`` -- and the same assertions applied to it fail. That failure is asserted
    here, so "removing the gate makes this test fail" is a thing CI checks rather than a
    thing a docstring claims.
+4. **The oracle that agreed with the defect.** The last section *does* build a real
+   client, because it is about a decode rather than about the wire: the simulator's
+   ``D8`` now holds the ``REAL`` the bench holds, so a ``plc_clock`` declared ``u32``
+   reads a float's bit pattern here exactly as it did off the silicon. Until 2026-09-07
+   the simulator wrote an integer there and the test could not fail.
 """
 
 from __future__ import annotations
@@ -22,15 +29,21 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
+from typing import Final
 
 import pytest
 
+from aslmp.blocks.fields import F32, Bounds, PlcBlock, SlmpImplausibleValueError
+from aslmp.blocks.layout import plc_block
+from aslmp.blocks.plan import bind
+from aslmp.client import Plc, PlcClockSource
 from aslmp.testing.conformance import (
     TcpExchange,
     UdpExchange,
     run_conformance,
     standard_cases,
 )
+from aslmp.testing.memory import BENCH_SCAN_WRAP
 from aslmp.testing.pathology import HEALTHY
 from aslmp.testing.pytest_plugin import (  # noqa: F401 - importing registers the fixtures
     slmp_context,
@@ -49,6 +62,7 @@ from aslmp.testing.targets import (
     SimulatorTarget,
     diff_targets,
 )
+from aslmp.transport.base import TransportKind
 from aslmp.wire.codec import BINARY
 from aslmp.wire.frames import FOUR_E, THREE_E, request_body
 from aslmp.wire.route import Route
@@ -477,3 +491,115 @@ async def test_3e_request_subheader_is_0x5000_not_0x0054() -> None:
         assert plc.events_of("coding_mismatch"), (
             "a byte-swapped subheader is not this entry's request subheader"
         )
+
+
+# ======================================================================================
+# The oracle that agreed with the defect
+# ======================================================================================
+
+
+@plc_block(base="D0")
+class Loop(PlcBlock):
+    """Two of the bench's five ``f32`` points. The clock is not a field; it rides along."""
+
+    setpoint: F32
+    process_value: F32
+
+
+def clocked_client(simulator: PlcSimulator, entry: str, clock: PlcClockSource) -> Plc:
+    """A real client, over the real transport, against a running simulator.
+
+    The only place in this file that imports the client half of the package, and it is
+    here on purpose: this test is about the *decode*, so both sides being independent --
+    which is what the rest of the file buys -- is not what is under examination.
+    """
+    host, port = simulator.address(entry)
+    configured = simulator.entry(entry)
+    return Plc(
+        host,
+        port,
+        profile="melsec:iq-f/fx5u",
+        encoding=configured.encoding,
+        frame=configured.frame,
+        transport=TransportKind.TCP,
+        timeout=2.0,
+        plc_clock=clock,
+    )
+
+
+SCANS: Final = 4096
+"""Counts to advance ``D8`` by. Any exact ``f32`` integer does; four seconds of bench."""
+
+SCANS_AS_U32: Final = 0x45800000
+"""``4096.0f``'s bit pattern, i.e. 1166016512 -- what a ``u32`` decode of D8 publishes."""
+
+
+async def test_a_simulator_backed_f32_clock_catches_the_u32_decode() -> None:
+    """The test that would have caught the shipped defect, now that the oracle can fail.
+
+    Until 2026-09-07 the simulator's ``advance_scan`` wrote an **integer** double word to
+    ``D8``, so a client that decoded that point as ``u32`` -- which is what
+    :class:`~aslmp.client.PlcClockSource` did unconditionally -- read back exactly the
+    count the test had put there. The oracle carried the same misreading as the code it
+    was checking, and ~4100 tests plus two review rounds went green over it.
+
+    ``D8`` on the bench is ``IO_Scan``, a ``REAL``: the CPU's own ST is
+    ``IO_Scan := IO_Scan + 1.0`` (FX5U-32MT/DS fw 1.065 at 192.168.10.250, 2026-09-07).
+    The simulator holds one now, so the two declarations disagree here exactly as they
+    disagree on the wire -- and the ``f32`` arm of this test fails if the clock is
+    decoded as ``u32``, which is the property that was missing.
+
+    Both arms answer end code ``0x0000``. Nothing on the wire distinguishes them; only
+    the declaration does.
+    """
+    async with running(FX5U_32MT_DS) as simulator:
+        simulator.memory.set_f32("D", 0, 60.0)
+        simulator.memory.set_f32("D", 2, 0.0)
+        simulator.memory.set_f32("D", 8, 0.0)
+        for _ in range(SCANS):
+            simulator.dispatcher.advance_scan()
+        assert simulator.memory.get_f32("D", 8) == float(SCANS), "the CPU counted 4096"
+
+        declared_real = PlcClockSource(
+            "D8", kind="f32", bounds=Bounds(0.0, BENCH_SCAN_WRAP), label="scan"
+        )
+        async with clocked_client(simulator, "tcp", declared_real) as plc:
+            right = await bind(plc, Loop).read()
+
+        async with clocked_client(simulator, "tcp-4e", PlcClockSource("D8", kind="u32")) as plc:
+            wrong = await bind(plc, Loop).read()
+
+    assert right.tx is not None and wrong.tx is not None
+    assert right.setpoint == wrong.setpoint == 60.0, "the block itself decodes either way"
+
+    # The assertion the missing test was missing. Decode D8 as u32 and this fails.
+    assert right.tx.plc_clock == SCANS
+
+    # And the same registers, declared u32, publish a plausible useless number instead.
+    assert wrong.tx.plc_clock == SCANS_AS_U32
+    assert wrong.tx.plc_clock > BENCH_SCAN_WRAP, (
+        "285 thousand times the count, rising monotonically, end code 0x0000"
+    )
+
+
+async def test_a_declared_bound_is_the_only_thing_that_catches_the_next_one() -> None:
+    """A register carries no type, so the bound is the defence -- and it does fire.
+
+    Same wrong declaration as above, this time with the range the bench's own ST implies
+    (``IF IO_Scan > 1.0E7``). The client refuses rather than publishing, and names the
+    point, its address and the registers it came from.
+    """
+    async with running(FX5U_32MT_DS) as simulator:
+        simulator.memory.set_f32("D", 0, 60.0)
+        simulator.memory.set_f32("D", 2, 0.0)
+        simulator.memory.set_f32("D", 8, float(SCANS))
+        bounded_wrong = PlcClockSource(
+            "D8", kind="u32", bounds=Bounds(0, int(BENCH_SCAN_WRAP)), label="scan"
+        )
+        async with clocked_client(simulator, "tcp", bounded_wrong) as plc:
+            with pytest.raises(SlmpImplausibleValueError) as caught:
+                await bind(plc, Loop).read()
+
+    assert caught.value.field == "scan"
+    assert caught.value.address == "D8"
+    assert caught.value.value == SCANS_AS_U32

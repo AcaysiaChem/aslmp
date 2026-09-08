@@ -328,15 +328,22 @@ class SimulatorTarget:
         """Whether this CPU serves the given device-specification width."""
         return spec is SpecFormat.SHORT or self.long_device_spec
 
-    def accepts_random_device(self, device: str, *, random_ok: bool) -> bool:
+    def accepts_random_device(
+        self, device: str, *, random_ok: bool, pathology: Pathology | None = None
+    ) -> bool:
         """Whether a ``0403``/``1402`` access point at ``device`` is served.
 
         ``random_ok`` is the generic device table's own column. A target may override it
         upward through :attr:`Pathology.accept_illegal_random_points`, which is how the
         measured ``TS0`` acceptance is reproduced -- and how a test proves the client
         refuses what this PLC would have allowed.
+
+        ``pathology`` is the board **in force**, which a
+        :class:`~aslmp.testing.server.PlcSimulator` may have been handed instead of this
+        target's own. Omit it and the target's own board answers, as it always did.
         """
-        return random_ok or device in self.pathology.accept_illegal_random_points
+        board = self.pathology if pathology is None else pathology
+        return random_ok or device in board.accept_illegal_random_points
 
     def memory(self) -> DeviceMemory:
         """Fresh device memory shaped by this target's profile ranges."""
@@ -590,6 +597,22 @@ def diff_targets(left: SimulatorTarget, right: SimulatorTarget) -> TargetDiff:
     the two capabilities that answer ``0xC059``, the octal ``X``/``Y`` notation, the
     ``00 00`` remote fixed field, the single clear mode, and every pathology switch our
     CPU has on and the reference does not.
+
+    .. rubric:: What this document is not
+
+    It is a diff of **declared CPU behaviour**, and that is the whole of its scope. Two
+    kinds of rig-specific truth sit outside it and cannot appear here however wrong they
+    get, so neither an empty row nor a matching row is evidence about them:
+
+    * **What a register holds.** ``D8`` on our bench is ``IO_Scan``, a ``REAL`` the
+      program advances by 1.0 and resets above 1.0e7 -- see
+      :meth:`~aslmp.testing.memory.DeviceMemory.bump_f32`. That is a property of the
+      *program* on that CPU, not of the CPU model, and the simulator having modelled it
+      as an integer double word until 2026-09-07 would not have moved a single row here.
+    * **The board actually in force.** These rows compare each target's *own*
+      :class:`~aslmp.testing.pathology.Pathology`. A
+      :class:`~aslmp.testing.server.PlcSimulator` may have been handed a different one,
+      and what that simulator does is that board's behaviour, not this table's.
     """
     rows: list[tuple[str, str, str]] = []
 

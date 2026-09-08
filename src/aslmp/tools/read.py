@@ -6,6 +6,17 @@ dtype string threaded through a generic call and no ``.value`` on the result. Th
 you name selects one method on the client and its concrete return type, and the printed
 value is that type's ``repr``.
 
+``--as`` is **required**, for the same reason ``--profile`` is: there is no default that
+could be right. It defaulted to ``u16`` for one revision, and on the bench this library
+was built against that made ``aslmp read 192.168.10.250 D8`` print ``54720`` -- ``D8``
+holds a ``REAL`` there (``IO_Scan := IO_Scan + 1.0`` in the CPU's own ST), so 54720 is
+the low half of a float's bit pattern rendered as a plausible integer, and the CPU
+answers ``0x0000`` either way. Measured again from this host over TCP 5002 on
+2026-09-07: the same register read ``1625586.0`` as an f32 and ``30984`` as a u16 in the
+same second. "What is in D8" is the first question a newcomer asks, and the honest
+answer is that the register does not know; asking the caller costs six characters and is
+the whole difference between a value and a number.
+
 Every read here goes through the same ``0x0401`` / ``0x0403`` path as the library, with
 the same pre-transport refusals, so ``aslmp read ... D8000`` fails with the range error
 rather than with the CPU's ``0xC056``, and says which is which.
@@ -68,8 +79,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--as",
         dest="kind",
         choices=KINDS,
-        default="u16",
-        help="how to decode what is read (default: u16, one raw word)",
+        default=None,
+        help=(
+            "REQUIRED: how to decode what is read. A register carries no type on the "
+            "wire, so there is no default that could be right"
+        ),
     )
     parser.add_argument(
         "--count",
@@ -114,6 +128,18 @@ def _order(name: str | None) -> Any:
 
 def run(argv: Sequence[str]) -> int:
     args = parse_or_exit(build_parser(), argv)
+    if args.kind is None:
+        return usage(
+            "--as is required: a register carries no type on the wire, so there is no "
+            "default that could be right. On the bench this library was built against, "
+            "D8 is a REAL -- the CPU's own ST does IO_Scan := IO_Scan + 1.0 -- and this "
+            "command's old default of u16 answered `aslmp read ... D8` with 54720 "
+            "(measured on FX5U-32MT/DS fw 1.065, 2026-09-07): the low half of that "
+            "float's bit pattern, a perfectly plausible integer, end code 0x0000. "
+            f"Choose one of: {', '.join(KINDS)}. Check the type in GX Works3 under "
+            "Label -> Global Label; `--as words` prints the raw registers if you want "
+            "to look at the bytes first."
+        )
     if args.count < 1:
         return usage(f"--count must be at least 1; got {args.count}")
     if args.count > 1 and args.kind not in _ARRAY_KINDS:

@@ -15,6 +15,7 @@ it wrong and every value is a plausible number in the wrong field, with end code
 from __future__ import annotations
 
 import struct
+from typing import get_args
 
 import pytest
 from hypothesis import given, settings
@@ -31,7 +32,8 @@ from aslmp.commands import (
     dword,
     word,
 )
-from aslmp.commands.random import split_points
+from aslmp.commands.random import _POINT_DOMAINS, PointKind, split_points
+from aslmp.errors import SlmpValueRangeError
 from aslmp.profile import Encoding, Link
 from aslmp.profiles import FX5U
 from aslmp.wire.codec import ASCII, BINARY, Codec, SpecFormat
@@ -297,3 +299,56 @@ def test_decode_of_encode_restores_caller_order(points: list[RandomPoint]) -> No
             )
         else:
             assert struct.pack("<f", decoded[index]) == struct.pack("<I", raw)
+
+
+# ======================================================================================
+# A point carries its own type, and wire_value is where that is enforced
+# ======================================================================================
+
+
+def test_wire_value_holds_a_write_to_the_type_the_point_itself_declares() -> None:
+    """The regression. ``wire_value()`` called the 16/32-bit helper with no domain.
+
+    So the type the caller had *just written down* -- ``word("D100", kind="i16")`` --
+    was not enforced anywhere on this path: 40000 masked to 0x9C40 and would read back
+    as -25536, with end code 0x0000 at every step. ``Plc.write_random`` refused it one
+    layer up, which made the refusal a property of the door rather than of the request;
+    a caller holding a ``WriteRandom`` (a bound block plan builds them, and so does
+    anyone composing a frame by hand) got the mask.
+
+    Measured before the fix on FX5U-32MT/DS fw 1.065 from this host over TCP 5002
+    (2026-09-07): a 1402 carrying that masked word answered 0x0000 and D100 read back
+    -25536 as an i16.
+    """
+    with pytest.raises(SlmpValueRangeError, match="signed 16-bit field"):
+        RandomWrite(word("D100", kind="i16"), 40_000).wire_value()
+    with pytest.raises(SlmpValueRangeError, match="signed 32-bit field"):
+        RandomWrite(dword("D100", kind="i32"), 3_000_000_000).wire_value()
+
+    # In range for the declared type, and still two's complement on the wire.
+    assert RandomWrite(word("D100", kind="i16"), -1).wire_value() == 0xFFFF
+    assert RandomWrite(word("D100", kind="i16"), 32_767).wire_value() == 0x7FFF
+    assert RandomWrite(dword("D100", kind="i32"), -1).wire_value() == 0xFFFFFFFF
+
+
+def test_a_u16_point_stays_the_raw_register_it_prints_as() -> None:
+    """``u16`` is what a register is when nobody has said otherwise, and ``__str__``
+    prints it with no suffix at all for that reason. Both renderings of the same sixteen
+    bits stay legal there, exactly as they do for ``write_words``; 70000 does not."""
+    assert str(word("D100")) == "D100"
+    assert RandomWrite(word("D100"), -1).wire_value() == 0xFFFF
+    assert RandomWrite(word("D100"), 65_535).wire_value() == 0xFFFF
+    with pytest.raises(SlmpValueRangeError, match="does not fit"):
+        RandomWrite(word("D100"), 70_000).wire_value()
+
+
+def test_every_point_kind_maps_to_exactly_one_declared_domain() -> None:
+    """A total function, not a ``.get()`` with a permissive fallback: that fallback is
+    how a kind added later would silently inherit the union of the two ranges."""
+    kinds = {"u16", "i16", "u32", "i32", "f32", "bits"}
+    assert set(get_args(PointKind)) == kinds
+    assert set(_POINT_DOMAINS) == kinds
+    assert word("D0", kind="i16").signed_field is True
+    assert dword("D0", kind="i32").signed_field is True
+    assert word("D0").signed_field is None
+    assert dword("D0").signed_field is None

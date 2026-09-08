@@ -249,6 +249,7 @@ class PlcSimulator:
             target=target,
             memory=target.memory() if memory is None else memory,
             scenario=scenario,
+            pathology=self._pathology,
         )
         self._host = host
         self._bound: dict[str, _Bound] = {}

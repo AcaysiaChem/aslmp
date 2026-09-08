@@ -88,6 +88,7 @@ __all__ = [
     "EncodeContext",
     "WordOrder",
     "boolean",
+    "encoded",
     "expect_empty_payload",
     "expect_payload_len",
     "real",
@@ -422,16 +423,15 @@ def expect_empty_payload(payload: bytes, *, what: str) -> None:
     )
 
 
-def unsigned(
-    value: object, *, bits: int, what: str, signed_field: bool | None = None
-) -> int:
+def unsigned(value: object, *, bits: int, what: str, signed_field: bool | None) -> int:
     """``value`` as the unsigned ``bits``-wide field on the wire. **Enforces the type asked
     for.**
 
     Never masked and never truncated: ``pymcprotocol`` writes ``0x1FFFF`` into a 16-bit
     register as ``0xFFFF`` and reports success.
 
-    ``signed_field`` names the *declared* type and is the whole of the check:
+    ``signed_field`` names the *declared* type, is the whole of the check, and **has no
+    default**:
 
     ``True``
         A signed field. ``-32768..32767`` at 16 bits, and nothing else.
@@ -446,9 +446,24 @@ def unsigned(
         which is the only thing it could mean. This is not a mask of an out-of-range
         value; ``write_words([70000])`` still raises.
 
+    .. rubric:: Why the permissive case must be typed out
+
     The union was once the behaviour of every caller, and that is the defect this
     parameter closes: a named type whose range is not enforced is a value silently
     changed on the way to the plant, which is exactly what this library exists to stop.
+
+    ``signed_field`` then spent one revision defaulting to ``None``, which made the fix
+    **opt-in per call site**: every caller that named a type had to remember to say so,
+    and the one that forgot -- ``RandomWrite.wire_value``, against a point carrying its
+    own ``kind='i16'`` -- masked 40000 to ``0x9C40`` exactly as before, with end code
+    ``0x0000`` at every step. A default cannot be "the safe one" here, because there is
+    no value that is safe for a signed field, an unsigned field and a raw register at
+    once. So there is no default at all: the permissive case is spelled
+    ``signed_field=None`` at each of the five call sites where a register genuinely
+    carries no type (``write_words`` on the client and on ``plc.timed``, both
+    ``WriteWords`` checks, and ``BlockWrite``), and a new call site cannot inherit
+    permissiveness by omission. ``tests/unit/test_commands_base.py`` holds the signature
+    itself, so the default cannot come back by accident.
 
     A value that is not an ``int`` at all -- ``write_words([1.5])`` -- is refused here
     too, and with an :class:`~aslmp.errors.SlmpValueRangeError` rather than the bare
@@ -567,6 +582,50 @@ def boolean(value: object, *, what: str) -> bool:
         f"({value!r}). Nothing here treats a non-empty value as on: 2, -1 and 'yes' are "
         f"not one, and 0.0, [] and 'false' are not zero."
     )
+
+
+def encoded(value: object, *, encoding: str, what: str) -> bytes:
+    """``value`` as ``encoding`` bytes, with every failure inside the DESIGN 3.1 tree.
+
+    The string half of :func:`unsigned` and :func:`real`, and it exists for exactly the
+    reason :func:`real` does. ``value.encode(encoding)`` fails three ways and not one of
+    them was an :class:`~aslmp.errors.SlmpError`, so a caller's ``except SlmpError``
+    around a write did not catch the one failure it is there for:
+
+    * ``write_str('D100', b'x', length=4)`` raised ``AttributeError`` -- ``bytes`` has no
+      ``.encode`` -- from inside a write path, which reads as a library bug rather than
+      as "that is not a string";
+    * ``write_str('D100', 'caf\\u00e9', length=8)`` raised ``UnicodeEncodeError`` for a
+      character ASCII cannot carry;
+    * ``encoding='utf-9'`` raised ``LookupError`` for a codec that does not exist.
+
+    The first two are value-domain failures and raise
+    :class:`~aslmp.errors.SlmpValueRangeError`; the third is an incoherent argument and
+    raises :class:`~aslmp.errors.SlmpConfigurationError`, the same split the rest of this
+    module makes. All three are ``SlmpUsageError``, all three mean nothing was sent, and
+    none of them substitutes a replacement character: a part number written with ``?``
+    where its accent was is a different part number.
+    """
+    if not isinstance(value, str):
+        raise SlmpValueRangeError(
+            f"{what}: a string field takes a str, not {type(value).__name__} "
+            f"({value!r}). Nothing here decodes bytes on your behalf or calls str() on "
+            f"an object to see what comes out."
+        )
+    try:
+        return value.encode(encoding)
+    except LookupError as exc:
+        raise SlmpConfigurationError(
+            f"{what}: {encoding!r} is not a codec Python knows. Nothing here falls back "
+            f"to ASCII: the registers would hold a different string than the one asked "
+            f"for, and the PLC would answer 0x0000."
+        ) from exc
+    except UnicodeEncodeError as exc:
+        raise SlmpValueRangeError(
+            f"{what}: {value!r} cannot be encoded as {encoding} ({exc.reason} at "
+            f"character {exc.start}). Nothing here substitutes '?' or drops the "
+            f"character: a silently changed string is a different string."
+        ) from exc
 
 
 def signed(value: int, *, bits: int) -> int:

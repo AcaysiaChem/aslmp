@@ -572,6 +572,38 @@ def test_capabilities_without_a_profile_is_a_usage_error(
 # ========================================================================================
 
 
+def test_read_requires_an_explicit_type(capsys: pytest.CaptureFixture[str]) -> None:
+    """``--as`` defaulted to ``u16``, which is a guess dressed as a default.
+
+    On the bench this library was built against, ``D8`` holds a ``REAL`` -- the CPU's own
+    ST does ``IO_Scan := IO_Scan + 1.0`` -- so ``aslmp read ... D8`` printed 54720: the
+    low half of that float's bit pattern, a perfectly plausible integer, with the CPU
+    answering 0x0000 either way. "What is in D8" is the first question a newcomer asks
+    and the register does not know the answer, so the caller is asked instead, exactly as
+    ``--profile`` asks rather than defaulting.
+    """
+    from aslmp.tools import read as read_tool
+
+    status = read_tool.run(["1.2.3.4", "D8", "--profile", "melsec:iq-f/fx5u"])
+    assert status == EXIT_USAGE
+    message = capsys.readouterr().err
+    assert "--as is required" in message
+    assert "54720" in message
+    assert "f32" in message and "words" in message  # it lists what to choose from
+
+
+def test_read_still_accepts_every_kind_it_offers() -> None:
+    """Requiring --as must not have narrowed what may be asked for. No socket here: the
+    parser is asked directly, so this stays a statement about the arguments."""
+    from aslmp.tools import read as read_tool
+
+    parser = read_tool.build_parser()
+    for kind in read_tool.KINDS:
+        argv = ["1.2.3.4", "D0", "--profile", "melsec:iq-f/fx5u", "--as", kind]
+        assert parser.parse_args(argv).kind == kind
+    assert parser.parse_args(["1.2.3.4", "D0", "--profile", "x"]).kind is None
+
+
 def test_read_refuses_a_count_for_a_scalar_kind(capsys: pytest.CaptureFixture[str]) -> None:
     """``--count 4 --as i32`` is a request that cannot be honoured, so it is refused
     rather than silently read as one value."""

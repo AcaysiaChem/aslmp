@@ -39,7 +39,9 @@ nothing here re-registers automatically after a ``0xC05D``.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
+from dataclasses import field as _dataclass_field
 from typing import ClassVar
 
 from aslmp.commands.base import (
@@ -133,11 +135,32 @@ class MonitorRegistration:
     It is **not** evidence that the CPU still holds this list. A restart clears the
     registration and another client can replace it; the next ``0802`` then fails, and
     this library surfaces that end code rather than re-registering behind the caller.
+
+    .. rubric:: ``owner`` -- why the profile key is not enough
+
+    The profile key answers "is this the same *kind* of CPU", and that was the only
+    question asked. Two clients on one profile pointed at two different FX5Us have the
+    same key, so a registration made on the line-1 client executed on the line-2 client
+    passed every check and decoded line 2's registers under line 1's addresses, with end
+    code ``0x0000``. It is the weaker cousin of the bound-plan defect
+    (:meth:`aslmp.client.Plc._own_plan`), where a plan bound to one client transacted
+    happily on another, and it is closed the same way: the client that made the
+    registration stamps itself here, and :meth:`aslmp.client.Plc.monitor_read` refuses
+    one that came from anywhere else.
+
+    ``owner`` is typed ``object`` rather than ``Plc`` because this module is layer 2 and
+    ``aslmp.client`` is layer 5 -- ``tests/unit/test_layering.py`` reads the import graph
+    with ``ast``, so even a ``TYPE_CHECKING`` edge upward would fail the build. It is
+    never called, never compared with ``==`` and never dereferenced; it is compared with
+    ``is`` and printed by name. It is excluded from equality and from ``repr`` so that
+    two registrations describing the same request still compare equal and no ``repr`` of
+    a registration drags a whole client into a log line.
     """
 
     points: tuple[RandomPoint, ...]
     profile_key: str
     subcommand: int
+    owner: object = _dataclass_field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "points", tuple(self.points))
@@ -145,6 +168,13 @@ class MonitorRegistration:
             raise SlmpConfigurationError(
                 "a MonitorRegistration with no points describes nothing to read"
             )
+
+    def owned_by(self, client: object) -> MonitorRegistration:
+        """This registration, stamped with the client that made it. Copies; never mutates.
+
+        Called once, by ``Plc.monitor_register``, on the value ``0801`` decoded into.
+        """
+        return dataclasses.replace(self, owner=client)
 
     def __str__(self) -> str:
         return f"monitor({render_addresses(self.points)}) on {self.profile_key}"

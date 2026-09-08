@@ -26,6 +26,7 @@ from aslmp.testing.dispatch import (
     Silence,
     registered_request_codes,
 )
+from aslmp.testing.memory import BENCH_SCAN_WRAP
 from aslmp.testing.scenario import Scenario, abnormal
 from aslmp.testing.targets import FX5U_32MT_DS, PEDANTIC, SimulatorTarget
 from aslmp.wire.codec import ASCII, BINARY, Codec, SpecFormat
@@ -542,6 +543,39 @@ def test_remote_run_can_be_made_to_lie() -> None:
     assert plc.state.run_state == 0x0002
 
 
+def test_a_pathology_handed_to_the_dispatcher_reaches_the_handlers() -> None:
+    """The switch that did nothing. ``PlcSimulator(pathology=...)`` now reaches down here.
+
+    Three switches live in the handlers rather than in the socket layer:
+    ``remote_run_lies``, ``remote_reset_no_response`` and
+    ``accept_illegal_random_points``. Until 2026-09-07 every handler read
+    ``target.pathology``, so a board handed to the simulator was honoured above and
+    ignored below -- a test that turned one of these on the documented way got a CPU that
+    behaved perfectly and an assertion that passed for the wrong reason.
+    """
+    lying = FX5U_32MT_DS.pathology.replace(remote_run_lies=True)
+    plc = Dispatcher(target=FX5U_32MT_DS, memory=FX5U_32MT_DS.memory(), pathology=lying)
+    assert plc.board is lying
+    assert not FX5U_32MT_DS.pathology.remote_run_lies, "the target itself is honest"
+
+    plc.state.run_state = 0x0002
+    payload = BINARY.number(1, bits=16) + BINARY.number(0, bits=8) + BINARY.number(0, bits=8)
+    out = reply(
+        serve(
+            FX5U_32MT_DS,
+            make_request(BINARY, command=0x1001, payload=payload),
+            dispatcher=plc,
+        )
+    )
+    assert out.end_code == 0x0000, "0x0000 on a state that was never reached"
+    assert plc.state.run_state == 0x0002, "the override lied, exactly as asked"
+
+
+def test_a_dispatcher_with_no_override_still_uses_its_target_board() -> None:
+    plc = Dispatcher(target=FX5U_32MT_DS, memory=FX5U_32MT_DS.memory())
+    assert plc.board is FX5U_32MT_DS.pathology
+
+
 def test_a_wrong_password_is_refused() -> None:
     payload = BINARY.number(4, bits=16) + b"1234"
     assert reply(
@@ -670,11 +704,34 @@ def test_a_scenario_takes_precedence_and_is_then_spent() -> None:
     assert script.exhausted
 
 
-def test_the_scan_counter_advances() -> None:
+def test_the_scan_counter_advances_as_the_real_it_is() -> None:
+    """``D8`` is ``IO_Scan``, a ``REAL``, so the dispatcher's counter is a ``float``.
+
+    The last assertion is the regression: the register holds the *bit pattern* of 2.0f,
+    so a client that declared this point ``u32`` reads 1073741824 and not 2. That is the
+    number the library published as a scan count until 2026-09-07, and this simulator
+    used to hold a real 2 there, which is why no test could see it.
+    """
     plc = Dispatcher(target=FX5U_32MT_DS, memory=FX5U_32MT_DS.memory())
-    assert plc.advance_scan() == 1
-    assert plc.advance_scan() == 2
-    assert plc.memory.get_u32("D", 8) == 2
+    assert plc.advance_scan() == 1.0
+    assert plc.advance_scan() == 2.0
+    assert isinstance(plc.state.scan, float)
+    assert plc.memory.get_f32("D", 8) == 2.0
+    assert plc.memory.get_u32("D", 8) == 0x40000000
+
+
+def test_the_scan_counter_wraps_where_the_bench_program_wraps() -> None:
+    """``IF IO_Scan > 1.0E7``, one line of the CPU's own ST, reproduced."""
+    plc = Dispatcher(target=FX5U_32MT_DS, memory=FX5U_32MT_DS.memory())
+    plc.memory.set_f32("D", 8, BENCH_SCAN_WRAP)
+    assert plc.advance_scan() < BENCH_SCAN_WRAP
+
+
+def test_a_scan_counter_can_still_be_asked_to_climb_forever() -> None:
+    """``wrap_above=None`` for a CPU whose program has no reset. Opt-in, not the default."""
+    plc = Dispatcher(target=FX5U_32MT_DS, memory=FX5U_32MT_DS.memory())
+    plc.memory.set_f32("D", 8, BENCH_SCAN_WRAP)
+    assert plc.advance_scan(wrap_above=None) == BENCH_SCAN_WRAP + 1.0
 
 
 def test_a_reply_cannot_carry_both_an_end_code_and_data() -> None:

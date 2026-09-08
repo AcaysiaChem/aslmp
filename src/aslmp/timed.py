@@ -38,7 +38,7 @@ from aslmp.client import (
     _string_words,
     _to_words,
 )
-from aslmp.commands.base import AddressLike, WordOrder, boolean, real, signed, unsigned
+from aslmp.commands.base import AddressLike, WordOrder, boolean, encoded, real, signed, unsigned
 from aslmp.commands.batch import ReadBits, ReadWords, WriteBits, WriteWords
 from aslmp.commands.block import BlockSpec, BlockWrite, ReadBlocks, WriteBlocks
 from aslmp.commands.info import DEFAULT_LOOPBACK, ClearError, ReadTypeName, SelfTest
@@ -371,8 +371,15 @@ class TimedApi:
 
         A string longer than ``length`` raises rather than being truncated to fit: a
         silently shortened part number is a wrong part number.
+
+        ``value`` must be a ``str`` that ``encoding`` can actually carry. Passing
+        ``b"x"``, a character ASCII has no room for, or a codec name that does not exist
+        raises inside the DESIGN section 3.1 tree
+        (:func:`~aslmp.commands.base.encoded`) rather than as the bare
+        ``AttributeError``, ``UnicodeEncodeError`` or ``LookupError`` that
+        ``value.encode(encoding)`` used to let out of a write path.
         """
-        raw = value.encode(encoding)
+        raw = encoded(value, encoding=encoding, what=f"write_str({address})")
         if len(raw) > length:
             raise SlmpConfigurationError(
                 f"write_str({address}, length={length}) was given {len(raw)} byte(s) of "
@@ -416,7 +423,14 @@ class TimedApi:
         :class:`~aslmp.errors.SlmpValueRangeError` before anything is built.
         """
         checked = tuple(
-            unsigned(value, bits=16, what=f"write_words({address}) value {index}")
+            # signed_field=None: this is the raw-register door, and it is the only
+            # kind of write that has no declared type to enforce.
+            unsigned(
+                value,
+                bits=16,
+                what=f"write_words({address}) value {index}",
+                signed_field=None,
+            )
             for index, value in enumerate(values)
         )
         _written, tx = await self._plc._run(WriteWords(address, checked), mutates=True)
@@ -526,16 +540,25 @@ class TimedApi:
         "monitor not registered" a reader of the generic reference would expect. It is
         never emulated with a ``0403``: substituting a different command that returns
         similar-looking data is exactly the silent recovery this library forbids.
+
+        The returned registration is stamped with **this** client, and
+        :meth:`monitor_read` will execute it on no other (:meth:`_own_registration`).
         """
         registration, tx = await self._plc._run(RegisterMonitor(tuple(points)), mutates=True)
-        return Reading(registration, tx)
+        return Reading(registration.owned_by(self._plc), tx)
 
     async def monitor_read(
         self, registration: MonitorRegistration, /
     ) -> Reading[RandomReading]:
-        """``0802``: read the registered list. Positional, exactly like ``read_random``."""
-        values, tx = await self._plc._run(ExecuteMonitor(registration), mutates=False)
-        resolved = tuple(point.resolve(self._plc._ctx) for point in registration.points)
+        """``0802``: read the registered list. Positional, exactly like ``read_random``.
+
+        The registration must have been made by **this** client; one made by another
+        raises :class:`~aslmp.errors.SlmpConfigurationError` and sends nothing
+        (:meth:`_own_registration`).
+        """
+        owned = self._plc._own_registration(registration, "monitor_read()")
+        values, tx = await self._plc._run(ExecuteMonitor(owned), mutates=False)
+        resolved = tuple(point.resolve(self._plc._ctx) for point in owned.points)
         return Reading(RandomReading(resolved, values, tx), tx)
 
     async def self_test(self, payload: bytes = DEFAULT_LOOPBACK, /) -> Reading[bytes]:

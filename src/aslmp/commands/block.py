@@ -140,7 +140,14 @@ class BlockWrite:
     def __post_init__(self) -> None:
         object.__setattr__(self, "values", tuple(self.values))
         for index, value in enumerate(self.values):
-            unsigned(value, bits=16, what=f"write_blocks({self.address!r}) word {index}")
+            # signed_field=None: a block is raw registers, so -1 and 65535 are the same
+            # word. unsigned() has no default for this; see its docstring.
+            unsigned(
+                value,
+                bits=16,
+                what=f"write_blocks({self.address!r}) word {index}",
+                signed_field=None,
+            )
 
     @property
     def points(self) -> int:

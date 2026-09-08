@@ -23,7 +23,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Literal
 
 from aslmp.commands.registry import COMMANDS
-from aslmp.testing.memory import AbsentDeviceError, OutOfRangeError, SimulatorMemoryError
+from aslmp.testing.memory import (
+    BENCH_SCAN_STEP,
+    BENCH_SCAN_WRAP,
+    AbsentDeviceError,
+    OutOfRangeError,
+    SimulatorMemoryError,
+)
 from aslmp.wire.codec import (
     ASCII,
     Notation,
@@ -41,6 +47,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
     from aslmp.profile import Encoding
     from aslmp.testing.memory import DeviceMemory
+    from aslmp.testing.pathology import Pathology
     from aslmp.testing.scenario import Scenario
     from aslmp.testing.targets import SimulatorTarget
     from aslmp.wire.codec import Codec
@@ -150,8 +157,15 @@ class SessionState:
 
     password_locked: bool = False
     error_flag: bool = False
-    scan: int = 0
     served: int = 0
+
+    scan: float = 0.0
+    """The scan counter as the register holds it: a ``float``, because ``D8`` is a ``REAL``.
+
+    ``int`` here would be the same mis-declaration the library shipped and would let a
+    simulator-backed test of an ``f32`` clock agree with a ``u32`` decode of it. See
+    :meth:`Dispatcher.advance_scan`.
+    """
 
 
 # ----------------------------------------------------------------------------------------
@@ -286,6 +300,16 @@ class ServerContext:
     unit: Unit
     command: int
     subcommand: int
+    pathology: Pathology
+    """The board **in force**, which is not always ``target.pathology``.
+
+    :class:`~aslmp.testing.server.PlcSimulator` takes a ``pathology=`` argument and its
+    socket layer honours it. Until 2026-09-07 the handlers read ``target.pathology``
+    instead, so the three switches that live down here -- ``remote_run_lies``,
+    ``remote_reset_no_response`` and ``accept_illegal_random_points`` -- silently ignored
+    it: a test that turned one on the documented way got a CPU that did not misbehave,
+    and its assertion passed for the wrong reason. Read this, never ``target.pathology``.
+    """
 
     def refuse(self, name: str, detail: str) -> RefusalError:
         """A refusal carrying the end code this target declares for ``name``."""
@@ -442,7 +466,9 @@ def _require_random_device(ctx: ServerContext, device: DecodedDevice) -> None:
     against JY997D56001-K p.78 (measured 2026-09-06). A target that reproduces that is
     how a test proves the **client** refuses what this PLC would have allowed.
     """
-    if ctx.target.accepts_random_device(device.type.name, random_ok=device.type.random_ok):
+    if ctx.target.accepts_random_device(
+        device.type.name, random_ok=device.type.random_ok, pathology=ctx.pathology
+    ):
         return
     raise ctx.refuse(
         "illegal_random_device",
@@ -780,7 +806,7 @@ def _handle_remote_run(ctx: ServerContext, cursor: PayloadCursor) -> Outcome:
             f"clear mode {clear} is not one this CPU accepts; an iQ-F's clear-mode table "
             f"has exactly one row and it is 00H",
         )
-    if ctx.target.pathology.remote_run_lies:
+    if ctx.pathology.remote_run_lies:
         return Reply(0x0000)
     ctx.state.run_state = CpuRunState.RUN
     return Reply(0x0000)
@@ -791,7 +817,7 @@ def _handle_remote_pause(ctx: ServerContext, cursor: PayloadCursor) -> Outcome:
     _require_remote(ctx)
     cursor.number(16)
     cursor.finish()
-    if ctx.target.pathology.remote_run_lies:
+    if ctx.pathology.remote_run_lies:
         return Reply(0x0000)
     ctx.state.run_state = CpuRunState.PAUSE
     return Reply(0x0000)
@@ -801,7 +827,7 @@ def _handle_remote_stop(ctx: ServerContext, cursor: PayloadCursor) -> Outcome:
     """``1002``: the two-unit fixed field, ``00 00`` on iQ-F and ``01 00`` elsewhere."""
     _require_remote(ctx)
     _consume_fixed_field(ctx, cursor)
-    if ctx.target.pathology.remote_run_lies:
+    if ctx.pathology.remote_run_lies:
         return Reply(0x0000)
     ctx.state.run_state = CpuRunState.STOP
     return Reply(0x0000)
@@ -821,7 +847,7 @@ def _handle_remote_reset(ctx: ServerContext, cursor: PayloadCursor) -> Outcome:
     if not ctx.target.remote_reset:
         raise ctx.refuse("remote_control_disabled", "remote reset is disabled on this CPU")
     _consume_fixed_field(ctx, cursor)
-    if ctx.target.pathology.remote_reset_no_response:
+    if ctx.pathology.remote_reset_no_response:
         return Silence(
             "0x1006 Remote Reset completed: SH(NA)-080956ENG-M p.136 says the response "
             "is not sent back, and over TCP the connection is torn down with it.",
@@ -916,6 +942,17 @@ class Dispatcher:
     memory: DeviceMemory
     state: SessionState = field(default_factory=SessionState)
     scenario: Scenario | None = None
+    pathology: Pathology | None = None
+    """An override for the target's own board, or ``None`` to use the target's.
+
+    :class:`~aslmp.testing.server.PlcSimulator` passes whatever it was given here, so a
+    ``pathology=`` argument reaches the handlers and not only the socket layer.
+    """
+
+    @property
+    def board(self) -> Pathology:
+        """The pathology actually in force: the override if there is one, else the target's."""
+        return self.target.pathology if self.pathology is None else self.pathology
 
     def handle(self, request: RawRequest, *, codec: Codec, encoding: Encoding) -> Outcome:
         """Serve one request. Never raises for a malformed one: it answers an end code."""
@@ -934,6 +971,7 @@ class Dispatcher:
             unit=unit,
             command=request.command,
             subcommand=request.subcommand,
+            pathology=self.board,
         )
         scripted = None if self.scenario is None else self.scenario.take(request.command)
         if scripted is not None:
@@ -953,14 +991,30 @@ class Dispatcher:
         except RefusalError as refusal:
             return Reply(refusal.end_code)
 
-    def advance_scan(self, device: str = "D", index: int = 8) -> int:
+    def advance_scan(
+        self,
+        device: str = "D",
+        index: int = 8,
+        *,
+        step: float = BENCH_SCAN_STEP,
+        wrap_above: float | None = BENCH_SCAN_WRAP,
+    ) -> float:
         """Advance the free-running scan counter the bench CPU keeps at ``D8``/``D9``.
 
-        The FX5U runs at roughly 1024 scans per second with no physical I/O wired, so a
-        client reading ``D8`` twice gets two different numbers. A simulator whose
-        registers never move lets a stale-value bug pass.
+        **That register is a ``REAL``**, so this is an ``f32`` bump and not a double-word
+        one: the CPU's own ST is ``IO_Scan := IO_Scan + 1.0`` with ``IF IO_Scan > 1.0E7``
+        (FX5U-32MT/DS fw 1.065 at 192.168.10.250, 2026-09-07). It idles at 1018 scans/s
+        with no physical I/O wired, so a client reading ``D8`` twice gets two different
+        numbers -- and a simulator whose registers never move lets a stale-value bug pass.
+
+        This method used to call :meth:`~aslmp.testing.memory.DeviceMemory.bump_u32`,
+        which made every simulator-backed test of an ``f32`` scan counter pass against a
+        ``u32`` decode of it. Use :meth:`~aslmp.testing.memory.DeviceMemory.bump_u32`
+        directly for a counter a CPU really declares as an integer double word.
         """
-        self.state.scan = self.memory.bump_u32(device, index)
+        self.state.scan = self.memory.bump_f32(
+            device, index, step, wrap_above=wrap_above
+        )
         return self.state.scan
 
 

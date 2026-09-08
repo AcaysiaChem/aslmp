@@ -77,10 +77,14 @@ $ aslmp read 192.168.10.250 D0 --as f32 --timing --profile melsec:iq-f/fx5u
   6.92 ms wire, 1 chunk(s), command 0x0401 sub 0x0000, 15 bytes back
 ```
 
-`--as` takes `bit i16 u16 i32 u32 f32 f64 str words bits` (default `u16`). `--count` applies
-only to `words`, `bits` and `f32`; naming it with any other kind is a usage error rather than a
-silently ignored flag. `--as str` requires `--length`, because a string's word count is part of
-the request and cannot be inferred from the response.
+`--as` takes `bit i16 u16 i32 u32 f32 f64 str words bits` and is **required**, for the same
+reason `--profile` is: a register carries no type on the wire, so there is no default that could
+be right. It defaulted to `u16` for one revision, which made `aslmp read 192.168.10.250 D8`
+print `54720` on the bench this library was built against — `D8` holds a `REAL` there, so that
+number is the low half of a float's bit pattern and the CPU answers `0x0000` either way.
+`--count` applies only to `words`, `bits` and `f32`; naming it with any other kind is a usage
+error rather than a silently ignored flag. `--as str` requires `--length`, because a string's
+word count is part of the request and cannot be inferred from the response.
 
 Addresses are written the way GX Works3 shows them. On iQ-F **X and Y are octal**: `Y20` is the
 17th output and goes on the wire as 16. `Y8` is refused, because it does not exist under octal

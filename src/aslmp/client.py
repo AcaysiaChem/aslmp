@@ -66,6 +66,7 @@ from aslmp.commands.base import (
     EncodeContext,
     WordOrder,
     boolean,
+    encoded,
     real,
     signed,
     unsigned,
@@ -329,7 +330,7 @@ class PlcClockSource:
     own notion of time inside the same snapshot as the data -- which is the only way to
     tell "the network was slow" from "the CPU did not scan".
 
-    .. rubric:: ``kind`` is required reading, and it used to be a constant
+    .. rubric:: ``kind`` is required, and it used to be a constant
 
     This class once carried an address and nothing else, and
     :mod:`aslmp.blocks.plan` read it as a hard-coded unsigned double word. On the bench
@@ -355,16 +356,21 @@ class PlcClockSource:
     Declaring one is the only defence against the *next* mis-declaration, since the wrong
     type still answers ``0x0000``.
 
-    ``kind`` defaults to ``"u32"`` for compatibility with the callers this class already
-    had -- a default that was previously not even expressible. It is a default, not a
-    guess: check the type in GX Works3 under ``Label -> Global Label`` and declare it.
+    ``kind`` has **no default**, and that is the second half of the same fix. It spent
+    one revision defaulting to ``"u32"`` "for compatibility", which is the identical
+    shape to the defect it replaced: a default standing in for a fact only the caller
+    knows, invisible on the wire, and wrong on the very bench that motivated the class.
+    ``PlcClockSource("D8")`` would still have published 16274 counts/s for 1018 real
+    ones, and no test, no end code and no readback could have told anyone. This package
+    is ``0.1.0.dev0`` with no released users, so the guess is gone rather than carried
+    forward: check the type in GX Works3 under ``Label -> Global Label`` and say it.
 
     The client stores this and exposes it; :mod:`aslmp.blocks.plan` is what folds it into a
     request. Nothing here silently adds a point to a caller's own ``read_random``.
     """
 
     address: AddressLike
-    kind: PointKind = "u32"
+    kind: PointKind
     bounds: Bounds | None = None
     label: str = "plc_clock"
 
@@ -1615,8 +1621,15 @@ class Plc:
 
         A string longer than ``length`` raises rather than being truncated to fit: a
         silently shortened part number is a wrong part number.
+
+        ``value`` must be a ``str`` that ``encoding`` can actually carry. Passing
+        ``b"x"``, a character ASCII has no room for, or a codec name that does not exist
+        raises inside the DESIGN section 3.1 tree
+        (:func:`~aslmp.commands.base.encoded`) rather than as the bare
+        ``AttributeError``, ``UnicodeEncodeError`` or ``LookupError`` that
+        ``value.encode(encoding)`` used to let out of a write path.
         """
-        raw = value.encode(encoding)
+        raw = encoded(value, encoding=encoding, what=f"write_str({address})")
         if len(raw) > length:
             raise SlmpConfigurationError(
                 f"write_str({address}, length={length}) was given {len(raw)} byte(s) of "
@@ -1668,7 +1681,14 @@ class Plc:
         :class:`~aslmp.errors.SlmpValueRangeError` before anything is built.
         """
         checked = tuple(
-            unsigned(value, bits=16, what=f"write_words({address}) value {index}")
+            # signed_field=None: this is the raw-register door, and it is the only
+            # kind of write that has no declared type to enforce.
+            unsigned(
+                value,
+                bits=16,
+                what=f"write_words({address}) value {index}",
+                signed_field=None,
+            )
             for index, value in enumerate(values)
         )
         _written, tx = await self._run(WriteWords(address, checked), mutates=True)
@@ -1885,6 +1905,41 @@ class Plc:
             f"{self.name}.bind({plan.layout.block_name})."
         )
 
+    def _own_registration(
+        self, registration: MonitorRegistration, what: str
+    ) -> MonitorRegistration:
+        """Refuse a monitor registration this client did not make. Nothing is sent.
+
+        :meth:`_own_plan`'s weaker cousin, and the same defect one command along.
+        ``ExecuteMonitor.validate`` checks the registration's **profile key**, which
+        answers "is this the same kind of CPU" and not "is this the same CPU": two
+        clients on ``melsec:iq-f/fx5u`` pointed at two different FX5Us share that key
+        exactly. A ``0802`` carries no device specification at all -- the whole request
+        is the command and the subcommand -- so the registration IS the decoder, and one
+        made against line 1 executed on line 2 returns line 2's registers labelled with
+        line 1's addresses, end code ``0x0000``, nothing anywhere to say so.
+
+        A registration with no owner is refused too, and deliberately: the only way to
+        get one is to build it by hand, which means it never described a ``0801`` this
+        CPU acknowledged. Registering again costs one round trip and is the honest fix.
+        """
+        if registration.owner is self:
+            return registration
+        made_by = (
+            "no client -- it was constructed directly"
+            if registration.owner is None
+            else getattr(registration.owner, "name", repr(registration.owner))
+        )
+        raise SlmpConfigurationError(
+            f"{what} was called on {self.name} with a registration made by {made_by}. A "
+            f"0802 request carries no device specification, so the registration is the "
+            f"only thing that can parse the response; executed against a different CPU "
+            f"it decodes that CPU's registers under this list's addresses and answers "
+            f"0x0000. The shared profile key {registration.profile_key} does not make "
+            f"two CPUs the same CPU. Nothing was sent. Call "
+            f"{self.name}.monitor_register(...) and use what it returns."
+        )
+
     async def read_block(self, plan: BlockPlan[B], /) -> B:
         """One ``0403`` from an already-bound plan: :meth:`BlockPlan.read`.
 
@@ -1919,17 +1974,26 @@ class Plc:
         "monitor not registered" a reader of the generic reference would expect. It is
         never emulated with a ``0403``: substituting a different command that returns
         similar-looking data is exactly the silent recovery this library forbids.
+
+        The returned registration is stamped with **this** client, and
+        :meth:`monitor_read` will execute it on no other (:meth:`_own_registration`).
         """
         registration, tx = await self._run(RegisterMonitor(tuple(points)), mutates=True)
-        return self._done(registration, tx)
+        return self._done(registration.owned_by(self), tx)
 
     @mirrored
     async def monitor_read(
         self, registration: MonitorRegistration, /
     ) -> RandomReading:
-        """``0802``: read the registered list. Positional, exactly like ``read_random``."""
-        values, tx = await self._run(ExecuteMonitor(registration), mutates=False)
-        resolved = tuple(point.resolve(self._ctx) for point in registration.points)
+        """``0802``: read the registered list. Positional, exactly like ``read_random``.
+
+        The registration must have been made by **this** client; one made by another
+        raises :class:`~aslmp.errors.SlmpConfigurationError` and sends nothing
+        (:meth:`_own_registration`).
+        """
+        owned = self._own_registration(registration, "monitor_read()")
+        values, tx = await self._run(ExecuteMonitor(owned), mutates=False)
+        resolved = tuple(point.resolve(self._ctx) for point in owned.points)
         return self._done(RandomReading(resolved, values, tx), tx)
 
     # ====================================================================================
@@ -2252,35 +2316,26 @@ class RemoteControl:
 # ========================================================================================
 
 
-_POINT_DOMAINS: Final[Mapping[str, bool | None]] = {
-    "i16": True,
-    "i32": True,
-    "u16": None,
-    "u32": None,
-}
-"""Whether a point kind names a *signed* type, an unsigned one, or a raw register.
-
-``i16``/``i32`` name a signed type and are enforced as one. ``u16``/``u32`` are the kinds
-:meth:`RandomPoint.__str__` prints with no suffix at all, because they are what a register
-is when nobody has said otherwise: the union of the two renderings stays legal there, the
-way it does for :meth:`write_words`. ``f32`` is absent because it is checked by
-:func:`~aslmp.commands.base.real` instead, and ``bits`` because ``1402`` in word units
-cannot carry one (``RandomWrite`` refuses it at construction).
-"""
-
-
 def _check_point_value(write: RandomWrite, index: int) -> None:
-    """Hold one ``1402`` value to the type its own access point names. Sends nothing."""
-    kind = write.point.kind
+    """Hold one ``1402`` value to the type its own access point names. Sends nothing.
+
+    This function once carried its own kind-to-domain table, which is one table too
+    many: :meth:`~aslmp.commands.random.RandomWrite.wire_value` enforces the same rule
+    at encode time and was reading no table at all, so the two disagreed and the public
+    door was the only one that refused. The table now lives beside the kinds it
+    describes, as :attr:`~aslmp.commands.random.RandomPoint.signed_field`, and both
+    read it. What survives here is the *message*: refused at the call, naming the
+    caller's own value index, before a frame exists.
+    """
     what = f"write_random() value {index} at {write.point}"
-    if kind == "f32":
+    if write.point.kind == "f32":
         real(write.value, bits=32, what=what)
         return
     unsigned(
         write.value,
         bits=write.point.width.bits,
         what=what,
-        signed_field=_POINT_DOMAINS.get(kind),
+        signed_field=write.point.signed_field,
     )
 
 

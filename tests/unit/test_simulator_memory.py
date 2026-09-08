@@ -1,20 +1,28 @@
 """``aslmp.testing.memory`` -- the words and bits a simulated CPU holds.
 
-The two things worth testing here are the ones a naive model gets wrong:
+The three things worth testing here are the ones a naive model gets wrong:
 
 * a **word** access point on a bit device is 16 consecutive bits with the named device as
   bit 0, not one register (SH(NA)-080956ENG-M p.54);
 * the **span** is validated, never the start address. ``D7999`` alone is legal on an FX5U
   and ``D7999`` for two points is not, and both were measured on FX5U-32MT/DS fw 1.065
-  (2026-09-06).
+  (2026-09-06);
+* the bench's scan counter at ``D8``/``D9`` is a ``REAL`` and not a double word. This
+  file used to say the opposite, in the one method whose whole job was to model that
+  register, and that is why a client reading it as ``u32`` passed ~4100 tests.
 """
 
 from __future__ import annotations
+
+import math
+import struct
 
 import pytest
 
 from aslmp.profiles import FX5U, IQ_R
 from aslmp.testing.memory import (
+    BENCH_SCAN_STEP,
+    BENCH_SCAN_WRAP,
     AbsentDeviceError,
     DeviceMemory,
     MemoryRange,
@@ -140,12 +148,58 @@ def test_a_foreign_snapshot_is_refused(memory: DeviceMemory) -> None:
         memory.restore(other.snapshot())
 
 
-def test_the_scan_counter_moves(memory: DeviceMemory) -> None:
-    """The bench CPU free-runs at ~1024 scans/s; a static register hides stale reads."""
-    first = memory.bump_u32("D", 8)
-    second = memory.bump_u32("D", 8)
-    assert second == first + 1
-    assert memory.get_u32("D", 8) == second
+def test_the_bench_scan_counter_is_a_real_and_moves_like_one(memory: DeviceMemory) -> None:
+    """D8 on the bench is ``IO_Scan``, a ``REAL``. The simulator has to hold one.
+
+    The point is the second assertion. Bumping the register leaves it holding a *float*,
+    so the ``u32`` view of it is a bit pattern in the billions rather than a count of 2 --
+    which is exactly what a client that declared this register ``u32`` would have read
+    off the silicon, with end code ``0x0000`` and nothing to say so.
+    """
+    first = memory.bump_f32("D", 8)
+    second = memory.bump_f32("D", 8)
+    assert (first, second) == (1.0, 2.0)
+    assert memory.get_f32("D", 8) == 2.0
+    assert memory.get_u32("D", 8) == 0x40000000, "the u32 view of 2.0f, not the count 2"
+
+
+def test_the_bench_scan_counter_wraps_where_the_plc_program_wraps(
+    memory: DeviceMemory,
+) -> None:
+    """``IF IO_Scan > 1.0E7`` is one line of the CPU's own ST, so it is one line here.
+
+    Only the threshold is measured. The value the counter resumes from was never seen on
+    a wire -- 1.0e7 counts at 1018 scans/s is about 2.7 hours -- so this asserts that it
+    dropped below the threshold and not what it dropped to.
+    """
+    memory.set_f32("D", 8, BENCH_SCAN_WRAP - BENCH_SCAN_STEP)
+    assert memory.bump_f32("D", 8) == BENCH_SCAN_WRAP
+    assert memory.bump_f32("D", 8) < BENCH_SCAN_WRAP
+
+
+def test_every_count_below_the_wrap_is_an_exact_single(memory: DeviceMemory) -> None:
+    """The ulp claim the docstrings rest on, checked rather than asserted in prose.
+
+    An ``f32``'s ulp is 1.0 across ``[2**23, 2**24)`` and finer below, and the wrap is
+    under ``2**24``, so ``+1.0`` never loses a count and never stalls. It reaches 128 only
+    above ``2**30``, which this register never sees.
+    """
+    for start in (0.0, 2.0**22, 2.0**23, BENCH_SCAN_WRAP - 2.0):
+        memory.set_f32("D", 8, start)
+        assert memory.bump_f32("D", 8) == start + 1.0
+    assert math.ulp(BENCH_SCAN_WRAP) == 2.0 ** (-52 + 23), "the double's ulp, for contrast"
+    assert struct.unpack("<f", struct.pack("<f", BENCH_SCAN_WRAP + 1.0))[0] != BENCH_SCAN_WRAP
+
+
+def test_bump_u32_is_for_a_counter_that_is_really_an_integer(memory: DeviceMemory) -> None:
+    """It still exists, and it still means a ``DWORD``/``DINT`` and nothing else.
+
+    Kept because "a genuinely integer counter" is a real thing to want; renamed in its
+    docstring because pointing it at D8 is what made ~4100 tests agree with a defect.
+    """
+    memory.set_u32("D", 100, 0xFFFFFFFF)
+    assert memory.bump_u32("D", 100) == 0, "a 32-bit integer wraps at 32 bits"
+    assert memory.bump_u32("D", 100, step=7) == 7
 
 
 def test_a_family_cannot_be_allocated_twice() -> None:

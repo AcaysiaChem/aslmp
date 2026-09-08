@@ -53,9 +53,16 @@ from aslmp.client import (
     _string_words,
     _to_words,
 )
-from aslmp.commands.base import EncodeContext, WordOrder, boolean, real, unsigned
+from aslmp.commands.base import (
+    EncodeContext,
+    WordOrder,
+    boolean,
+    encoded,
+    real,
+    unsigned,
+)
 from aslmp.commands.batch import ReadWords
-from aslmp.commands.random import RandomWrite
+from aslmp.commands.random import RandomWrite, word
 from aslmp.errors import (
     ClientSummary,
     SlmpBlockLayoutError,
@@ -204,7 +211,7 @@ def test_a_capability_override_with_no_reason_is_refused() -> None:
 
 def test_the_plc_clock_source_is_stored_and_never_folded_in_silently() -> None:
     """Only a bound block plan appends the extra point; a caller's request is untouched."""
-    source = PlcClockSource("D8")
+    source = PlcClockSource("D8", kind="f32")
     plc = a_client(plc_clock=source)
     assert plc.plc_clock is source
     assert a_client().plc_clock is None
@@ -673,7 +680,7 @@ def test_write_i16_refuses_a_value_outside_the_signed_range_it_named() -> None:
     ``write_i16("D100", 40000)`` returned normally and ``read_i16("D100")`` answered
     ``-25536``, with end code ``0x0000`` at every step.
     """
-    assert unsigned(40_000, bits=16, what="x") == 40_000  # a raw register still may
+    assert unsigned(40_000, bits=16, what="x", signed_field=None) == 40_000  # raw: may
     with pytest.raises(SlmpValueRangeError, match="signed 16-bit field"):
         unsigned(40_000, bits=16, what="write_i16(D100)", signed_field=True)
     with pytest.raises(SlmpValueRangeError, match="unsigned 16-bit field"):
@@ -685,9 +692,9 @@ def test_write_i16_refuses_a_value_outside_the_signed_range_it_named() -> None:
 def test_a_word_value_that_is_not_an_int_is_a_slmp_error_and_not_a_type_error() -> None:
     """``write_words("D100", [1.5])`` raised a bare TypeError from ``1.5 & 0xFFFF``."""
     with pytest.raises(SlmpValueRangeError, match="takes an int, not float"):
-        unsigned(1.5, bits=16, what="write_words(D100) value 0")
+        unsigned(1.5, bits=16, what="write_words(D100) value 0", signed_field=None)
     with pytest.raises(SlmpValueRangeError, match="takes an int, not bool"):
-        unsigned(True, bits=16, what="write_words(D100) value 0")
+        unsigned(True, bits=16, what="write_words(D100) value 0", signed_field=None)
 
 
 def test_a_float_value_domain_failure_is_a_slmp_error_and_not_an_overflow_error() -> None:
@@ -790,9 +797,11 @@ def test_read_block_and_write_block_refuse_a_plan_bound_to_another_client() -> N
 def test_write_random_holds_each_value_to_the_type_its_own_point_names() -> None:
     """The same defect one layer along: a point's ``kind`` is a named type too.
 
-    ``RandomWrite(word("D100", kind="i16"), 40000).wire_value()`` still returns 40000 --
-    ``aslmp.commands.random`` shares the raw-register helper -- so the public surface is
-    where the point's own declaration is enforced.
+    This check refuses at the call, naming the caller's own value index, before a frame
+    exists. It is no longer the only thing that refuses:
+    ``RandomWrite.wire_value()`` reads the point's declared domain too, so a caller who
+    builds the command directly gets the same answer
+    (``tests/unit/test_commands_random.py``). Both now read one table, on the point.
     """
     from aslmp.commands.random import dword, word
 
@@ -807,3 +816,146 @@ def test_write_random_holds_each_value_to_the_type_its_own_point_names() -> None
     ):
         with pytest.raises(SlmpValueRangeError):
             _check_point_value(bad, 0)
+
+
+ACCENTED = "caf" + chr(0xE9)
+"""``cafe`` with an acute accent, built rather than typed so this file stays ASCII.
+
+ASCII cannot carry it and UTF-8 encodes it as two bytes, which is the whole test."""
+
+
+async def test_write_str_refuses_a_value_domain_failure_inside_the_error_tree() -> None:
+    """The regression: ``value.encode(encoding)`` was unguarded on all three write paths.
+
+    ``plc.write_str("D100", b"x", length=4)`` raised ``AttributeError`` -- ``bytes`` has
+    no ``.encode`` -- from inside a write path, so a caller's ``except SlmpError`` around
+    the write saw nothing and the traceback read as a library bug. A character the codec
+    cannot carry raised ``UnicodeEncodeError`` and an unknown codec name raised
+    ``LookupError``, neither of them in the DESIGN section 3.1 tree either.
+
+    All three are refused before the socket is consulted, which is what the
+    ``SlmpNotConnectedError`` on the good value proves: this client has no connection, so
+    anything that got as far as sending would report that instead.
+    """
+    plc = a_client()
+    with pytest.raises(SlmpValueRangeError, match="takes a str, not bytes"):
+        await plc.write_str("D100", b"x", length=4)  # type: ignore[arg-type]
+    with pytest.raises(SlmpValueRangeError, match="takes a str, not int"):
+        await plc.write_str("D100", 42, length=4)  # type: ignore[arg-type]
+    with pytest.raises(SlmpValueRangeError, match="cannot be encoded as ascii"):
+        await plc.write_str("D100", ACCENTED, length=8)
+    with pytest.raises(SlmpConfigurationError, match="not a codec Python knows"):
+        await plc.write_str("D100", "ok", length=4, encoding="utf-9")
+    with pytest.raises(SlmpNotConnectedError):
+        await plc.write_str("D100", "ok", length=4)
+
+    # And the same three on plc.timed, which is the generated copy of this method.
+    with pytest.raises(SlmpValueRangeError, match="takes a str, not bytes"):
+        await plc.timed.write_str("D100", b"x", length=4)  # type: ignore[arg-type]
+    with pytest.raises(SlmpValueRangeError, match="cannot be encoded as ascii"):
+        await plc.timed.write_str("D100", ACCENTED, length=8)
+    with pytest.raises(SlmpConfigurationError, match="not a codec Python knows"):
+        await plc.timed.write_str("D100", "ok", length=4, encoding="utf-9")
+
+
+def test_a_string_that_cannot_be_encoded_is_not_silently_substituted() -> None:
+    """``str.encode`` has ``errors="replace"``, and this library does not use it: a part
+    number written with ``?`` where its accent was is a different part number."""
+    assert encoded("ok", encoding="ascii", what="x") == b"ok"
+    assert encoded(ACCENTED, encoding="utf-8", what="x") == bytes((99, 97, 102, 195, 169))
+    with pytest.raises(SlmpValueRangeError) as caught:
+        encoded(ACCENTED, encoding="ascii", what="write_str(D100)")
+    assert "write_str(D100)" in str(caught.value)
+    assert "character 3" in str(caught.value)
+
+
+def test_a_plc_clock_kind_is_required_rather_than_defaulting_to_a_guess() -> None:
+    """The last of the same shape: a default standing in for a fact only the caller has.
+
+    ``kind`` defaulted to ``"u32"`` "for compatibility" in the revision that introduced
+    it, which reproduces the exact defect it was added to fix -- on the bench that
+    motivated the class, ``D8`` is a ``REAL`` and ``PlcClockSource("D8")`` would still
+    have published a float's bit pattern. Nothing on the wire can detect the omission,
+    so the omission is refused instead. 0.1.0.dev0, no released users, no guess carried
+    forward.
+    """
+    parameter = inspect.signature(PlcClockSource).parameters["kind"]
+    assert parameter.default is inspect.Parameter.empty
+    with pytest.raises(TypeError, match="kind"):
+        PlcClockSource("D8")  # type: ignore[call-arg]
+    assert PlcClockSource("D8", kind="f32").spec.struct_code == "f"
+
+
+def test_monitor_read_refuses_a_registration_made_by_another_client() -> None:
+    """``_own_plan``'s weaker cousin, and the same failure mode.
+
+    ``ExecuteMonitor.validate`` checks the registration's PROFILE KEY, which two clients
+    aimed at two different FX5Us share exactly. A ``0802`` request carries no device
+    specification at all, so the registration is the only thing that can parse the
+    response: executed against the wrong CPU it returns that CPU's registers labelled
+    with this list's addresses, end code ``0x0000``.
+    """
+    from aslmp.commands.monitor import MonitorRegistration
+
+    line_one = a_client()
+    line_two = Plc("10.255.255.1", 5099, profile="melsec:iq-f/fx5u")
+    registration = MonitorRegistration(
+        points=(word("D0"),), profile_key=FX5U.key, subcommand=0
+    ).owned_by(line_one)
+
+    assert line_one._own_registration(registration, "monitor_read()") is registration
+    with pytest.raises(SlmpConfigurationError, match="registration made by") as caught:
+        line_two._own_registration(registration, "monitor_read()")
+    assert "monitor_read()" in str(caught.value)
+    assert FX5U.key in str(caught.value)
+
+    # The profile key alone would have let this through: it is the same key.
+    assert registration.profile_key == FX5U.key == line_two.profile.key
+
+
+async def test_monitor_read_calls_that_guard_before_it_touches_the_socket() -> None:
+    """The guard has to be wired in, not merely available.
+
+    Both clients are iQ-F, where ``0802`` is a capability refusal -- the CPU answers
+    ``0xC059`` and the profile refuses pre-transport. So the owner's call gets as far as
+    command validation and raises ``SlmpCapabilityError``, while the stranger's never
+    reaches it: ownership is checked first, in the client, before anything is built.
+    """
+    from aslmp.commands.monitor import MonitorRegistration
+
+    owner = a_client()
+    stranger = Plc("10.255.255.1", 5099, profile="melsec:iq-f/fx5u")
+    registration = MonitorRegistration(
+        points=(word("D0"),), profile_key=FX5U.key, subcommand=0
+    ).owned_by(owner)
+
+    with pytest.raises(SlmpConfigurationError, match="registration made by"):
+        await stranger.monitor_read(registration)
+    with pytest.raises(SlmpConfigurationError, match="registration made by"):
+        await stranger.timed.monitor_read(registration)
+    with pytest.raises(SlmpCapabilityError, match="0xC059"):
+        await owner.monitor_read(registration)
+
+
+def test_a_monitor_registration_nobody_registered_is_refused_too() -> None:
+    """A hand-built registration never described an 0801 any CPU acknowledged."""
+    from aslmp.commands.monitor import MonitorRegistration
+
+    plc = a_client()
+    orphan = MonitorRegistration(points=(word("D0"),), profile_key=FX5U.key, subcommand=0)
+    assert orphan.owner is None
+    with pytest.raises(SlmpConfigurationError, match="constructed directly"):
+        plc._own_registration(orphan, "monitor_read()")
+
+
+def test_the_owner_stamp_is_not_part_of_a_registrations_identity() -> None:
+    """Two registrations describing the same request still compare equal, and no repr of
+    one drags a whole client into a log line."""
+    from aslmp.commands.monitor import MonitorRegistration
+
+    plain = MonitorRegistration(points=(word("D0"),), profile_key=FX5U.key, subcommand=0)
+    stamped = plain.owned_by(a_client())
+    assert stamped == plain
+    assert stamped is not plain
+    assert plain.owner is None  # owned_by copies; it never mutates
+    assert "Plc" not in repr(stamped)

@@ -206,6 +206,37 @@ def test_a_write_of_a_signed_value_is_accepted_as_twos_complement() -> None:
     assert WriteWords("D0", (-1,)).encode(CTX).endswith(b"\xff\xff")
 
 
+def test_a_bit_write_refuses_a_value_that_is_not_a_bool_rather_than_coercing_it() -> None:
+    """``WriteBits.__post_init__`` used to be ``tuple(bool(v) for v in values)``.
+
+    So ``WriteBits("M100", (2, -1, "yes"))`` was three relays commanded ON, and
+    ``(0.0, [], "false")`` was three commanded OFF -- Python's truthiness standing in for
+    the plant's. ``Plc.write_bits`` already refused all three through ``boolean()``, so
+    the coercion only ever ran for a caller who built the command directly, which is
+    exactly the caller with no other guard. A bit device holds one of two states and
+    this library does not guess which one a third value meant.
+    """
+    bad: tuple[tuple[object, ...], ...] = (
+        (2,),
+        (-1,),
+        ("yes",),
+        (0.0,),
+        ([],),
+        ("false",),
+        (1, 0),
+    )
+    for values in bad:
+        with pytest.raises(SlmpValueRangeError, match="takes True or False"):
+            WriteBits("M100", values)  # type: ignore[arg-type]
+    assert WriteBits("M100", (True, False)).values == (True, False)
+
+
+def test_a_bit_write_names_the_offending_index() -> None:
+    """The third element of a list of ten is a needle; the message hands it over."""
+    with pytest.raises(SlmpValueRangeError, match=r"write_bits\(\) value 2"):
+        WriteBits("M100", (True, False, 1, True))  # type: ignore[arg-type]
+
+
 def test_an_odd_bit_write_length_is_not_twice_the_binary_length() -> None:
     """The one place the 2x rule breaks. Overstating it gets no response at all."""
     command = WriteBits("M0", (True, False, True, False, True))

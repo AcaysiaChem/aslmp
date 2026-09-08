@@ -66,6 +66,8 @@ from aslmp.testing.dispatch import (
     Silence,
 )
 from aslmp.testing.memory import (
+    BENCH_SCAN_STEP,
+    BENCH_SCAN_WRAP,
     AbsentDeviceError,
     DeviceMemory,
     MemoryRange,
@@ -100,6 +102,8 @@ from aslmp.testing.vectors import Corpus, Vector, load_corpus, load_vectors
 __all__ = [
     "ALL_TARGETS",
     "BENCH_ENTRIES",
+    "BENCH_SCAN_STEP",
+    "BENCH_SCAN_WRAP",
     "FX5U_32MT_DS",
     "FX5U_MEASURED",
     "HANDLERS",

@@ -51,6 +51,7 @@ from aslmp.errors import (
     SlmpPayloadShapeError,
     SlmpPointLimitError,
     SlmpTargetChangedError,
+    SlmpValueRangeError,
 )
 from aslmp.identity import CpuIdentity
 from aslmp.profile import Encoding, Family
@@ -652,6 +653,26 @@ async def test_a_string_too_long_for_its_field_is_refused_rather_than_truncated(
         await plan.write(name="far too long")
 
 
+async def test_a_string_field_that_cannot_be_encoded_raises_inside_the_error_tree() -> None:
+    """The third copy of the same unguarded ``.encode``. ``plan.write(name=...)`` reached
+    ``value.encode(spec.encoding)`` with nothing around it, so a character the declared
+    codec cannot carry raised a bare ``UnicodeEncodeError`` out of a write path -- not an
+    ``SlmpError``, so the caller's ``except`` around the write did not see it. Nothing is
+    substituted and nothing is sent; ``errors="replace"`` would put a ``?`` where the
+    accent was and report success.
+    """
+
+    @plc_block(base="D500")
+    class Recipe:
+        name: str = Str(length=8)
+
+    plan = bind(a_client(), Recipe)
+    with pytest.raises(SlmpValueRangeError, match="cannot be encoded as ascii"):
+        await plan.write(name="caf" + chr(0xE9))
+    with pytest.raises(SlmpBlockLayoutError, match="takes a str"):
+        await plan.write(name=b"bytes")
+
+
 async def test_write_block_refuses_a_mixed_block_by_the_same_sentence() -> None:
     plan = bind(a_client(), Bench)
     value = Bench(setpoint=1.0, scan=2, mode=3, fault=True)
@@ -666,7 +687,7 @@ async def test_write_block_refuses_a_mixed_block_by_the_same_sentence() -> None:
 
 def test_a_configured_plc_clock_adds_one_double_word_point() -> None:
     """So a cycle carries the CPU's own notion of time inside the same snapshot."""
-    plc = a_client(plc_clock=PlcClockSource("D8"))
+    plc = a_client(plc_clock=PlcClockSource("D8", kind="u32"))
     plan = bind(plc, Bench)
     assert plan.points == 5
     assert [str(a) for a in plan.dword_points] == ["D0", "D2", "D8"]
@@ -675,7 +696,7 @@ def test_a_configured_plc_clock_adds_one_double_word_point() -> None:
 
 
 def test_the_clock_point_does_not_become_a_block_field() -> None:
-    plc = a_client(plc_clock=PlcClockSource("D8"))
+    plc = a_client(plc_clock=PlcClockSource("D8", kind="u32"))
     plan = bind(plc, Bench)
     payload = struct.pack("<HHfII", 7, 1, 12.5, 999, 4242)
     assert set(decode(plan, payload)) == {"mode", "fault", "setpoint", "scan"}
@@ -709,8 +730,12 @@ def test_a_real_clock_is_decoded_as_a_real_and_not_as_its_bit_pattern() -> None:
 
 
 def test_a_clock_declared_u32_reads_the_bit_pattern_because_that_is_the_declaration() -> None:
-    """Nothing here sniffs the bytes. The default is a default, not a guess."""
-    plc = a_client(plc_clock=PlcClockSource("D8"))
+    """Nothing here sniffs the bytes. A declaration is honoured, right or wrong.
+
+    Which is why there is no longer a default to inherit: ``kind`` is required, and the
+    only way to get this reading is to have typed ``kind="u32"`` against a REAL.
+    """
+    plc = a_client(plc_clock=PlcClockSource("D8", kind="u32"))
     plan = bind(plc, Bench)
     payload = struct.pack("<HHfI", 7, 1, 12.5, 999) + struct.pack("<HH", 0xFEA0, 0x4970)
     values = plan._reader.unpack(payload, binary=True)

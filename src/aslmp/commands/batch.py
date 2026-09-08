@@ -37,6 +37,7 @@ from aslmp.commands.base import (
     AddressLike,
     Command,
     EncodeContext,
+    boolean,
     expect_empty_payload,
     expect_payload_len,
     unsigned,
@@ -311,7 +312,7 @@ class WriteWords(_Batch[None]):
     def __post_init__(self) -> None:
         object.__setattr__(self, "values", tuple(self.values))
         for index, value in enumerate(self.values):
-            unsigned(value, bits=16, what=f"write_words() value {index}")
+            unsigned(value, bits=16, what=f"write_words() value {index}", signed_field=None)
 
     def points(self) -> int:
         return len(self.values)
@@ -321,7 +322,9 @@ class WriteWords(_Batch[None]):
 
     def encode(self, ctx: EncodeContext) -> bytes:
         wire = [
-            unsigned(value, bits=16, what=f"write_words() value {index}")
+            # signed_field=None: a batch of raw registers names no type, so -1 and 65535
+            # are the same sixteen bits. Every caller that DOES name one says so.
+            unsigned(value, bits=16, what=f"write_words() value {index}", signed_field=None)
             for index, value in enumerate(self.values)
         ]
         return self._head(ctx) + ctx.codec.words(wire)
@@ -355,7 +358,19 @@ class WriteBits(_Batch[None]):
     UNIT: ClassVar[Unit] = Unit.BIT
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "values", tuple(bool(value) for value in self.values))
+        # NOT tuple(bool(v) for v in ...). That coercion is what this class used to do,
+        # and it made WriteBits('M100', (2, -1, 'yes')) three relays ON with nothing
+        # anywhere to say the caller had passed the wrong thing -- Plc.write_bits already
+        # refused all three, so the coercion only ever ran for a caller who had reached
+        # past it. boolean() exists for exactly this and is now the only path.
+        object.__setattr__(
+            self,
+            "values",
+            tuple(
+                boolean(value, what=f"write_bits() value {index}")
+                for index, value in enumerate(self.values)
+            ),
+        )
 
     def points(self) -> int:
         return len(self.values)
