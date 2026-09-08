@@ -43,6 +43,7 @@ one shared implementation called twice.
 from __future__ import annotations
 
 import ast
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -514,3 +515,137 @@ def test_the_usage_translation_refuses_an_exception_it_does_not_recognise() -> N
     """
     with pytest.raises(TypeError, match=r"does not recognise"):
         usage_error_for(ValueError("not an address refusal"))
+
+
+# ========================================================================================
+# the submodules, which a module-level __getattr__ hides unless it is told not to
+# ========================================================================================
+#
+# PEP 562's ``__getattr__`` REPLACES the default attribute lookup on a package, and
+# ``aslmp/__init__.py`` answered only from its lazy ``_EXPORTS`` table. Every submodule
+# of the package was therefore an ``AttributeError`` until something had imported it by
+# name -- including ``aslmp.sync``, which README.md line 19 documents as ``aslmp.sync.Plc``
+# and which is the first thing a reader of that line types. These four tests hold the
+# documented form, the table behind it, and the Tier 0 property it must not cost.
+
+
+def readme_dotted_paths() -> tuple[str, ...]:
+    """Every ``aslmp.<something>`` the README names, as dotted paths."""
+    text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    pattern = r"\baslmp\.([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
+    return tuple(sorted(set(re.findall(pattern, text))))
+
+
+def readme_root_imports() -> tuple[str, ...]:
+    """Every name a ``from aslmp import ...`` line in the README asks for."""
+    text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    names: set[str] = set()
+    for line in re.findall(r"^from aslmp import (.+)$", text, re.M):
+        names.update(part.strip() for part in line.split(","))
+    return tuple(sorted(names))
+
+
+def test_the_readme_names_something_worth_checking() -> None:
+    """The two scans above are regexes over prose; an empty one would pass vacuously."""
+    paths = readme_dotted_paths()
+    assert "sync.Plc" in paths, (
+        f"README.md no longer documents aslmp.sync.Plc, which is what this section of "
+        f"tests exists for. Found: {paths}"
+    )
+    assert readme_root_imports(), "README.md no longer has a `from aslmp import` line"
+
+
+@pytest.mark.parametrize("path", readme_dotted_paths())
+def test_every_dotted_name_the_readme_prints_resolves(path: str) -> None:
+    """``import aslmp`` then ``aslmp.sync.Plc``, exactly as README.md line 19 writes it.
+
+    Regression: this raised ``AttributeError: module 'aslmp' has no attribute 'sync'``.
+    So did ``testing``, ``tools``, ``blocks``, ``profiles``, ``errors``, ``wire``,
+    ``transport``, ``commands`` and ``data``. Documentation that does not run is a
+    defect in the same way a wrong value is.
+    """
+    import aslmp
+
+    obj: object = aslmp
+    for step in path.split("."):
+        assert hasattr(obj, step), (
+            f"README.md documents aslmp.{path}, and {step!r} does not resolve. A "
+            f"submodule needs its row in aslmp/__init__.py's _SUBMODULES; a class or "
+            f"function needs its row in _EXPORTS."
+        )
+        obj = getattr(obj, step)
+
+
+@pytest.mark.parametrize("name", readme_root_imports())
+def test_every_name_the_readme_imports_from_the_root_resolves(name: str) -> None:
+    import aslmp
+
+    assert hasattr(aslmp, name), f"README.md writes `from aslmp import {name}`"
+    assert name in aslmp.__all__, f"{name} resolves but is not in the __all__ contract"
+
+
+def test_the_submodule_table_matches_the_package_directory() -> None:
+    """``_SUBMODULES`` is hand-written, so the direction that rots is a new module.
+
+    Discovering them with ``pkgutil`` instead would touch the filesystem on first
+    attribute access and would publish whatever happened to be lying in the package
+    directory. The table is the contract; this test is what keeps it true.
+    """
+    from aslmp import _SUBMODULES
+
+    on_disk = {
+        path.stem if path.suffix == ".py" else path.name
+        for path in PACKAGE.iterdir()
+        if (path.suffix == ".py" and not path.stem.startswith("_"))
+        or (path.is_dir() and (path / "__init__.py").exists())
+    }
+    on_disk -= {"__pycache__"}
+    assert on_disk == _SUBMODULES, (
+        f"aslmp/__init__.py's _SUBMODULES and the package directory disagree.\n"
+        f"  only in the table: {sorted(_SUBMODULES - on_disk)}\n"
+        f"  only on disk:      {sorted(on_disk - _SUBMODULES)}"
+    )
+
+
+def test_every_submodule_resolves_as_an_attribute_of_the_package() -> None:
+    """One fresh process, ``import aslmp``, then every submodule by attribute."""
+    from aslmp import _SUBMODULES
+
+    names = ", ".join(repr(name) for name in sorted(_SUBMODULES))
+    result = run_probe(
+        f"import aslmp\n"
+        f"missing = [n for n in ({names},) if not hasattr(aslmp, n)]\n"
+        f"print(','.join(missing))\n"
+    )
+    assert not result, f"unreachable as attributes of aslmp: {result}"
+
+
+def test_the_submodule_table_costs_nothing_to_import_or_to_list() -> None:
+    """Tier 0 again, from the side the new table could break it.
+
+    ``__dir__`` now names the submodules. If it -- or the table -- ever resolved one to
+    check it, ``dir(aslmp)`` would drag ``aslmp.client`` and therefore ``socket`` and
+    ``asyncio`` into a process that asked for a list of strings.
+    """
+    leaked = run_probe(
+        "import sys, aslmp\n"
+        "names = dir(aslmp)\n"
+        f"print(','.join(m for m in {FORBIDDEN_MODULES!r} if m in sys.modules))\n"
+    )
+    assert not leaked, f"dir(aslmp) imported {leaked}"
+    assert "sync" in run_probe("import aslmp; print(' '.join(dir(aslmp)))").split()
+
+
+def test_the_submodules_are_not_in_the_all_contract() -> None:
+    """Reachable, and deliberately not part of the ``__all__`` name contract.
+
+    ``__all__`` is DESIGN section 2's stability promise over the names ``_EXPORTS``
+    resolves -- one row, one object. A submodule is reached by import instead, and
+    ``tests/unit/test_tools.py`` holds ``__all__`` equal to that table plus the version
+    so nothing joins the contract without a row.
+    """
+    import aslmp
+    from aslmp import _SUBMODULES
+
+    overlap = sorted(_SUBMODULES & set(aslmp.__all__))
+    assert not overlap, f"submodules leaked into the __all__ contract: {overlap}"

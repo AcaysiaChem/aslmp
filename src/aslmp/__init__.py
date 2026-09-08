@@ -28,6 +28,13 @@ IDE see ordinary imports.
 ``__all__`` is the stability contract of DESIGN section 2: two-minor-version deprecation
 notice, no removals in a minor. Anything not named here is private, including every
 module whose name starts with an underscore.
+
+The one thing that is public and *not* in ``__all__`` is a submodule. ``aslmp.sync``,
+``aslmp.testing`` and their siblings resolve as attributes of this package through
+:data:`_SUBMODULES` -- the README documents ``aslmp.sync.Plc`` and a bare
+``__getattr__`` over ``_EXPORTS`` made that an ``AttributeError`` -- but they are
+reached by import rather than by the table, so they do not join the name contract.
+:data:`_SUBMODULES` says why at length.
 """
 
 from __future__ import annotations
@@ -862,16 +869,77 @@ _EXPORTS: Final[dict[str, str]] = {
 
 __all__ = ["__version__", *sorted(_EXPORTS)]
 
+_SUBMODULES: Final[frozenset[str]] = frozenset(
+    {
+        "blocks",
+        "client",
+        "commands",
+        "connection",
+        "data",
+        "entries",
+        "errors",
+        "health",
+        "identity",
+        "loop",
+        "observability",
+        "profile",
+        "profiles",
+        "resilience",
+        "results",
+        "sync",
+        "testing",
+        "timed",
+        "timing",
+        "tools",
+        "transport",
+        "wire",
+    }
+)
+"""The public submodules, reachable as attributes of the package.
+
+Python binds a submodule onto its parent package as a side effect of importing it, so
+``import aslmp.sync`` has always made ``aslmp.sync`` work. What did not work is the form
+the README documents on line 19 and every REPL user tries first::
+
+    import aslmp
+    aslmp.sync.Plc          # AttributeError, before this table existed
+
+-- because a module-level ``__getattr__`` (PEP 562) *replaces* the default attribute
+lookup on a package, and the one above answered only from :data:`_EXPORTS`. Every
+submodule of the package was unreachable that way: ``sync``, ``testing``, ``tools``,
+``blocks``, ``profiles``, ``errors``, ``wire``, ``transport``, ``commands``, ``data``.
+
+The names are written out rather than discovered, for the same reason ``_EXPORTS`` is:
+a ``pkgutil`` walk would import nothing but would still have to touch the filesystem on
+first attribute access, and it would publish whatever happened to be lying in the
+package directory. ``tests/unit/test_public_surface.py`` holds this set against the
+package directory, so adding a module and forgetting this line fails the build.
+
+Not in ``__all__``, deliberately, and this is the one place to say why rather than to
+leave it looking like an omission. ``__all__`` is the DESIGN section 2 stability
+contract over the *names this table resolves*: one row, one object, two minor versions
+of notice before it moves. A submodule is not one of those -- it is reached by import,
+it is named by ``aslmp.<name>`` in code that never says ``from aslmp import``, and
+``tests/unit/test_tools.py`` holds ``__all__`` equal to ``_EXPORTS`` plus the version
+precisely so that nothing can be added to the contract without a row. They are in
+:func:`__dir__`, so REPL completion still finds them.
+"""
+
 
 def __getattr__(name: str) -> Any:
     """Resolve one public name, importing its module the first time it is asked for.
 
     The resolved object is written back into this module's globals, so the second
     lookup is an ordinary attribute access with no dictionary indirection and no
-    ``importlib`` call.
+    ``importlib`` call. A submodule resolves the same way and costs the same once:
+    ``importlib`` also binds it onto the package itself.
     """
     module_name = _EXPORTS.get(name)
     if module_name is None:
+        if name in _SUBMODULES:
+            module = importlib.import_module(f"{__name__}.{name}")
+            globals()[name] = module
+            return module
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     value = getattr(importlib.import_module(module_name), name)
     globals()[name] = value
@@ -879,5 +947,9 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """Everything importable from here, so REPL completion sees the lazy names too."""
-    return sorted(__all__)
+    """Everything reachable from here: the lazy names and the submodules.
+
+    Both, so that REPL completion after ``aslmp.`` shows ``Plc`` and ``sync`` -- the
+    two things a reader of the README types first.
+    """
+    return sorted({*__all__, *_SUBMODULES})

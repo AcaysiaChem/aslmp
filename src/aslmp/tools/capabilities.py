@@ -36,11 +36,24 @@ __all__ = ["build_parser", "run"]
 
 _UNVERIFIED_NOTE = """
 Rows marked `manual` or `inferred` were never sent to hardware by us. Our iron is ONE
-FX5U-32MT/DS on firmware 1.065, binary 3E and 4E, over TCP and UDP. We have no iQ-R, no
-ASCII connection entry (Communication Data Code is a port-wide own-node setting on iQ-F,
-so ASCII cannot coexist with the binary entries we needed), and we deliberately never
-sent a remote-control command. Those paths are implemented, gated and labelled; they are
-not verified.
+FX5U-32MT/DS on firmware 1.065, binary 3E and 4E, over TCP and UDP. We have no iQ-R and
+no ASCII connection entry (Communication Data Code is a port-wide own-node setting on
+iQ-F, so ASCII cannot coexist with the binary entries we needed).
+
+Remote control, said precisely, because this note used to say we had never sent one:
+0x1001 RUN, 0x1002 STOP and 0x1003 PAUSE WERE sent to that CPU on 2026-09-07, from the
+laptop at 192.168.10.41 over Wi-Fi, on TCP entries 5003 and 5004, and each did what it
+says -- checked against the free-running scan counter the PLC program keeps in D8, which
+only the CPU can advance, and not only against the SD203 the library itself reads.
+
+Still not verified, and each for its own reason:
+  * 0x1005 Latch Clear and 0x1006 Remote RESET have never been sent, and are not going
+    to be on a machine nobody is watching.
+  * The manual's claim that Remote RUN answers 0x0000 while the CPU's switch is in STOP
+    and the CPU does not run (SH(NA)-080956ENG-M p.131) -- the reason verify=True is the
+    default -- was never forced: our bench switch is in RUN and RUN was truthful there.
+
+Those paths are implemented, gated and labelled. Labelled is not verified.
 """
 
 

@@ -215,7 +215,7 @@ async def _serve(
         reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:  # pragma: no cover -- needs two live sockets
         peer = writer.get_extra_info("peername")
-        print(f"# client {peer} connected; opening {target}")
+        print(f"# client {peer} connected; opening {target}", flush=True)
         upstream: tuple[asyncio.StreamReader, asyncio.StreamWriter] | None = None
         refusal = ""
         try:
@@ -226,7 +226,7 @@ async def _serve(
             # hardware is the PLC already serving its one TCP connection for this entry.
             refusal = str(exc)
         if upstream is None:
-            print(f"# cannot reach {target}: {refusal}")
+            print(f"# cannot reach {target}: {refusal}", flush=True)
             writer.close()
             return
         up_reader, up_writer = upstream
@@ -252,12 +252,20 @@ async def _serve(
                 task.cancel()
             up_writer.close()
             writer.close()
-            print(f"# client {peer} closed")
+            print(f"# client {peer} closed", flush=True)
 
     server = await asyncio.start_server(handle, listen.host, listen.port)
+    # Every print in this command is flushed. Its whole output is a running log written
+    # while it blocks in serve_forever(), and the obvious way to keep a capture of a
+    # session is to redirect it to a file -- where Python block-buffers stdout and holds
+    # 8 KB of decoded frames until the process is stopped. Measured on this Windows 11
+    # host on 2026-09-07: a proxied `aslmp read` through this command left a 0-byte log
+    # while the read succeeded. `aslmp serve` had the same defect. A long-running
+    # command that prints is the class here, not the case.
     print(
         f"# aslmp proxy: {listen} -> {target}, {frame.frame_type.value} / {codec.name}\n"
-        f"# forwarding unconditionally; decoding a copy. Ctrl-C to stop."
+        f"# forwarding unconditionally; decoding a copy. Ctrl-C to stop.",
+        flush=True,
     )
     async with server:
         await server.serve_forever()
@@ -291,13 +299,15 @@ async def _pump(  # pragma: no cover -- needs two live sockets
             previous = at
             print(
                 f"{(at - started) / 1e6:9.2f} ms {arrow} {len(message):5d} B{delta}  "
-                f"{_describe(frame, codec, message, response=response)}"
+                f"{_describe(frame, codec, message, response=response)}",
+                flush=True,
             )
             if show:
-                print(f"{'':13}{hexdump(message, limit=show)}")
+                print(f"{'':13}{hexdump(message, limit=show)}", flush=True)
         if splitter.broken is not None:
             print(
                 f"# {arrow} decoding stopped: {splitter.broken}\n"
                 f"# forwarding continues untouched. If this is the first frame, --frame "
-                f"or --encoding is wrong; nothing here guesses."
+                f"or --encoding is wrong; nothing here guesses.",
+                flush=True,
             )

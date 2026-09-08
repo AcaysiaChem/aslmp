@@ -116,14 +116,31 @@ def a_timing(
     return builder.build()
 
 
-def a_tx(timing: TransactionTiming, *, end_code: int = 0) -> Transaction:
+def no_answer_timing() -> TransactionTiming:
+    """Sent, and nothing came back. What a Remote Reset AND a timeout both look like.
+
+    There is no field anywhere in :class:`~aslmp.timing.TransactionTiming` that tells
+    the two apart, which is why :meth:`aslmp.observability.Counters.observe` has to ask
+    the command registry instead of the record.
+    """
+    clock = FakeClock()
+    builder = TimingBuilder(clock)
+    builder.gate_acquired()
+    builder.encoded()
+    builder.sent()
+    return builder.build()
+
+
+def a_tx(
+    timing: TransactionTiming, *, end_code: int = 0, command: int = 0x0401
+) -> Transaction:
     return Transaction(
         timing=timing,
         sequence=1,
         connection_id="c1",
         generation=0,
         after_reconnect=False,
-        command=0x0401,
+        command=command,
         subcommand=0x0000,
         frame=THREE_E,
         encoding=BINARY,
@@ -526,6 +543,107 @@ def test_counters_observe_folds_a_segmented_transaction() -> None:
     assert counters.end_code_errors == 0
     counters.observe(a_tx(a_timing(wire_ns=1 * MS), end_code=0xC052))
     assert counters.end_code_errors == 1
+
+
+def test_an_answerless_exchange_is_not_a_failure() -> None:
+    """Regression, and it is the accounting that lied rather than the wire.
+
+    ``0x1006`` Remote Reset is the one command whose ABSENCE of a reply is the expected
+    outcome: SH(NA)-080956ENG-M p.136 says the response "is not be sent back to the
+    external device". ``Counters.observe`` decided on ``tx.timing.is_complete``, which
+    means ``decoded_at`` was stamped, and a silent exchange never stamps it -- so a call
+    that returned normally moved ``transactions_started`` and ``transactions_failed``
+    together and left ``transactions_completed`` behind. Measured across one such call:
+    started 4 -> 5, completed 4 -> 4, failed 0 -> 1.
+    """
+    counters = Counters()
+    counters.observe(a_tx(no_answer_timing(), command=0x1006))
+    assert counters.transactions_started == 1
+    assert counters.transactions_answerless == 1
+    assert counters.transactions_failed == 0
+    assert counters.transactions_completed == 0
+
+
+def test_the_same_empty_record_on_any_other_command_is_still_a_failure() -> None:
+    """The two are byte-identical as records. Only the command tells them apart.
+
+    This is the half that matters: a timeout produces exactly the timing the test above
+    produces, and a third bucket that swallowed it would be the silent recovery this
+    library is written against.
+    """
+    counters = Counters()
+    counters.observe(a_tx(no_answer_timing(), command=0x0401))
+    assert counters.transactions_failed == 1
+    assert counters.transactions_answerless == 0
+
+
+def test_an_answer_to_an_answerless_command_is_a_failure() -> None:
+    """A CPU that answers Remote Reset has not reset.
+
+    ``exchange_without_response`` refuses the bytes at the transport
+    (``_NothingExpected.feed``); the tally has to agree with it rather than pattern-match
+    the command code and call it a success.
+    """
+    counters = Counters()
+    counters.observe(a_tx(a_timing(wire_ns=1 * MS, decode=False), command=0x1006))
+    assert counters.transactions_failed == 1
+    assert counters.transactions_answerless == 0
+
+
+def test_the_three_outcomes_partition_every_started_transaction() -> None:
+    """``started == completed + failed + answerless``, always. No fourth state."""
+    counters = Counters()
+    counters.observe(a_tx(a_timing(wire_ns=7 * MS)))
+    counters.observe(a_tx(a_timing(wire_ns=7 * MS, decode=False), end_code=0xC059))
+    counters.observe(a_tx(no_answer_timing(), command=0x1006))
+    counters.observe(a_tx(no_answer_timing(), command=0x0401))
+    assert counters.transactions_started == 4
+    assert (
+        counters.transactions_completed
+        + counters.transactions_failed
+        + counters.transactions_answerless
+        == counters.transactions_started
+    )
+    assert counters.transactions_answerless == 1
+    assert counters.transactions_failed == 2
+
+
+def test_the_answerless_set_is_read_off_the_command_registry() -> None:
+    """Not a literal here. A command that declares ``response_optional`` joins it.
+
+    ``0x1006`` is the only member today, and the point of deriving it is that the day a
+    second command declares the property, the accounting follows without an edit.
+    """
+    from aslmp.commands.registry import COMMANDS
+
+    codes = obs.answerless_commands()
+    assert codes == {0x1006}
+    for code in codes:
+        spec = COMMANDS[code]
+        assert spec.commands
+        assert all(command.response_optional for command in spec.commands)
+
+
+def test_asking_for_the_answerless_set_costs_one_import() -> None:
+    """It is reached from a hot path, and ``import aslmp.observability`` must stay cheap.
+
+    Two properties in one process: importing this module pulls in neither the registry
+    nor a socket, and the set is cached rather than re-derived per transaction.
+    """
+    code = (
+        "import sys, aslmp.observability as o; "
+        "before = 'aslmp.commands.registry' in sys.modules; "
+        "first = o.answerless_commands(); "
+        "print(before, first is o.answerless_commands(), "
+        "any(m in sys.modules for m in ('socket', 'asyncio')))"
+    )
+    result = subprocess.run(  # our own interpreter, fixed argv
+        [sys.executable, "-I", "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.split() == ["False", "True", "False"], result.stdout
 
 
 def test_the_counters_the_design_names_all_exist() -> None:

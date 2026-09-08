@@ -65,6 +65,7 @@ __all__ = [
     "SinkFailed",
     "SocketRebound",
     "TargetChanged",
+    "answerless_commands",
     "attach_logging",
     "fanout",
     "nearest_rank",
@@ -342,6 +343,40 @@ def attach_logging(
 # Counters
 # ---------------------------------------------------------------------------
 
+_ANSWERLESS: list[frozenset[int]] = []
+"""One-slot cache for :func:`answerless_commands`: empty until first asked, then one
+element forever. A list rather than a module global rebound from inside the function,
+so the cached read is an index and never a ``global`` statement."""
+
+
+def answerless_commands() -> frozenset[int]:
+    """Command codes whose **absence** of a reply is the expected outcome.
+
+    ``{0x1006}`` today — Remote Reset, which resets before it can answer. The set is
+    derived from :data:`aslmp.commands.registry.COMMANDS`, where every command class
+    declares ``response_optional`` and the registry validates its rows at import, so
+    this is a read of a shipped fact rather than a second hand-typed copy of it.
+
+    The import is inside the function and the answer is cached, for the reason the rest
+    of this module exists: ``import aslmp.observability`` must stay cheap enough to sit
+    in :data:`tests.unit.test_public_surface.PUBLIC_ENTRY_POINTS`, and
+    :meth:`Counters.observe` is a hot path that must not pay an ``importlib`` lookup per
+    transaction. It is reached only on the branch where a transaction did not decode,
+    which is the rare one.
+    """
+    if not _ANSWERLESS:
+        from aslmp.commands.registry import COMMANDS
+
+        _ANSWERLESS.append(
+            frozenset(
+                code
+                for code, spec in COMMANDS.items()
+                if spec.commands
+                and all(command.response_optional for command in spec.commands)
+            )
+        )
+    return _ANSWERLESS[0]
+
 
 @final
 @dataclass(slots=True)
@@ -354,8 +389,28 @@ class Counters:
 
     # transactions
     transactions_started: int = 0
+    """Every transaction that reached the socket. ``started`` is exactly
+    ``completed + failed + answerless``; see :meth:`observe`."""
     transactions_completed: int = 0
+    """Decoded: the response came back and became typed values."""
     transactions_failed: int = 0
+    """Started and did not become values. A timeout, a lost connection, a corrupt
+    frame, a non-zero end code. **Not** the one exchange whose absence of a reply is
+    the expected outcome — that is ``transactions_answerless``, and booking it here is
+    the bug this counter was carrying: a successful ``0x1006`` Remote Reset moved
+    ``started`` and ``failed`` together and left ``completed`` behind."""
+    transactions_answerless: int = 0
+    """Sent, answered by nothing, and nothing was the right answer.
+
+    ``0x1006`` Remote Reset alone today: SH(NA)-080956ENG-M p.136 says the response "is
+    not be sent back to the external device". The set is not a literal here — it is
+    read off the command registry's own ``response_optional``, so a command that gains
+    the property gains the accounting with it and a command that has not declared it
+    still counts as a failure when it comes back empty.
+
+    Bytes arriving for one of these is a **failure**, not a success: a CPU that answers
+    Remote Reset has not reset. ``observe`` therefore requires an empty chunk list, not
+    just a matching command code."""
     end_code_errors: int = 0
     outcome_unknown: int = 0
     """State-changing requests that failed *after* the bytes went out."""
@@ -415,7 +470,27 @@ class Counters:
         return {f.name: int(getattr(self, f.name)) for f in fields(self)}
 
     def observe(self, tx: Transaction) -> None:
-        """Fold one completed-or-failed transaction into the tallies."""
+        """Fold one transaction into the tallies. Three outcomes, not two.
+
+        ``tx.timing.is_complete`` means ``decoded_at`` was stamped, and for every
+        command that has a response that is the right question. It is the wrong
+        question for the one exchange that expects none: nothing is ever received, so
+        nothing is ever decoded, so a **successful** answerless exchange was booked as a
+        failure. Observed across one such call: ``transactions_started`` 4 -> 5,
+        ``transactions_completed`` 4 -> 4, ``transactions_failed`` 0 -> 1, and the call
+        itself returned normally. Reproduced here against a constructed
+        :class:`~aslmp.timing.Transaction` rather than on the bench, because ``0x1006``
+        reboots the CPU and is one of the two commands that are never sent to it.
+
+        The third bucket is not a way of not counting failures. A transaction is
+        answerless only when its command is one the registry declares
+        ``response_optional`` **and** no bytes came back at all; a timeout on any other
+        command, and any answer to one of these, still lands in
+        ``transactions_failed``. The classification asks a shipped table rather than
+        the record, because the record cannot tell the two apart: a Remote Reset that
+        worked and a read that timed out produce byte-for-byte the same
+        :class:`~aslmp.timing.TransactionTiming` — sent, no chunks, no ``decoded_at``.
+        """
         self.transactions_started += 1
         self.bytes_sent += tx.request_bytes
         self.bytes_received += tx.response_bytes
@@ -424,6 +499,8 @@ class Counters:
             self.segmented_responses += 1
         if tx.timing.is_complete:
             self.transactions_completed += 1
+        elif not tx.timing.chunks and tx.command in answerless_commands():
+            self.transactions_answerless += 1
         else:
             self.transactions_failed += 1
         if tx.end_code != 0:

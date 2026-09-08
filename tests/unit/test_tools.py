@@ -31,8 +31,10 @@ from __future__ import annotations
 
 import ast
 import importlib
+import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -419,6 +421,124 @@ def test_ambiguities_names_an_unknown_key(capsys: pytest.CaptureFixture[str]) ->
     assert "--keys-only" in capsys.readouterr().err
 
 
+def shipped_ambiguity_keys() -> tuple[str, ...]:
+    """The keys in ``aslmp/data/ambiguities.tsv``, parsed here and not by aslmp.
+
+    Deliberately a second, dumb reader. ``aslmp.data.read_table`` is what the command
+    uses; a test that called it too would agree with the command about a row the reader
+    dropped, which is the failure mode this whole section exists for.
+    """
+    table = PACKAGE / "data" / "ambiguities.tsv"
+    keys: list[str] = []
+    for line in table.read_text(encoding="ascii").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        key = line.split("\t")[0]
+        if key.startswith("A-"):
+            keys.append(key)
+    return tuple(keys)
+
+
+def test_ambiguities_surfaces_exactly_the_rows_the_shipped_table_holds(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression: 30 rows in the file, 14 lines out of the CLI, 12 distinct keys.
+
+    The command walked the ``CpuProfile`` and ``CommandSpec`` objects, which carry an
+    ``Ambiguity`` only where a profile or a command needed to name one -- and de-duplicated
+    by VALUE, so ``A-CLEAR-MODE`` and ``A-REMOTE-FIXED`` each printed twice because two
+    objects held the same key with different wording. Eighteen shipped records were
+    unreachable from the command line that exists to print them.
+    """
+    expected = shipped_ambiguity_keys()
+    assert len(expected) == len(set(expected)), "duplicate key in ambiguities.tsv"
+    assert main(["ambiguities", "--keys-only"]) == EXIT_OK
+    printed = capsys.readouterr().out.split()
+    assert printed == list(expected), (
+        f"the CLI surfaces {len(printed)} row(s) and the shipped table holds "
+        f"{len(expected)}. Missing: {sorted(set(expected) - set(printed))}; "
+        f"invented: {sorted(set(printed) - set(expected))}"
+    )
+
+
+def test_ambiguities_can_print_the_retraction_we_published(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``A-UDP-TAIL-LATENCY`` is where this library says it published a wrong number.
+
+    It answered "no such ambiguity", which is a worse thing to say than the wrong number
+    was: the retraction ships in the wheel and the command that exists to print it denied
+    it existed.
+    """
+    assert main(["ambiguities", "--key", "A-UDP-TAIL-LATENCY"]) == EXIT_OK
+    printed = capsys.readouterr().out
+    assert "WITHDRAWN" in printed
+    assert "resolved_by_measurement" in printed
+    assert "FX5U-32MT/DS" in printed
+
+
+def test_ambiguities_prints_the_status_of_every_row(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An open question and a settled one are different things and must read differently."""
+    assert main(["ambiguities"]) == EXIT_OK
+    printed = capsys.readouterr().out
+    assert printed.count("  status:") == len(shipped_ambiguity_keys())
+    assert "open" in printed
+    assert "resolved_by_measurement" in printed
+
+
+def test_ambiguities_status_filter_selects_a_subset(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["ambiguities", "--status", "open", "--keys-only"]) == EXIT_OK
+    open_keys = capsys.readouterr().out.split()
+    assert 0 < len(open_keys) < len(shipped_ambiguity_keys())
+    assert main(["ambiguities", "--status", "settled", "--keys-only"]) == EXIT_FAILURE
+    assert "resolved_by_measurement" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("key", sorted(set(shipped_ambiguity_keys())))
+def test_every_shipped_ambiguity_is_reachable_by_key(
+    key: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One row, one lookup. This is the assertion the old collector could not pass."""
+    assert main(["ambiguities", "--key", key]) == EXIT_OK
+    assert key in capsys.readouterr().out
+
+
+def test_a_profile_filter_is_a_subset_of_the_table(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--profile`` narrows; it never reaches a row the shipped table does not hold."""
+    assert main(["ambiguities", "--profile", "melsec:iq-f/fx5u", "--keys-only"]) == EXIT_OK
+    keys = capsys.readouterr().out.split()
+    assert keys, "the FX5U profile carries no ambiguities at all"
+    assert set(keys) < set(shipped_ambiguity_keys())
+    assert len(keys) == len(set(keys)), f"a key printed twice: {keys}"
+
+
+def test_capabilities_does_not_deny_the_remote_control_we_sent(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The note told every user something that stopped being true on 2026-09-07.
+
+    ``0x1001`` RUN, ``0x1002`` STOP and ``0x1003`` PAUSE were driven against
+    FX5U-32MT/DS fw 1.065 from the laptop at 192.168.10.41 over Wi-Fi, TCP entries 5003
+    and 5004, and checked against the scan counter the PLC program keeps in D8. The note
+    still said "we deliberately never sent a remote-control command" -- an
+    under-claim, which is a lie in the same way an over-claim is, and the more corrosive
+    one in a file whose whole subject is what we did and did not verify.
+    """
+    assert main(["capabilities", "melsec:iq-f/fx5u"]) == EXIT_OK
+    printed = capsys.readouterr().out
+    assert "never sent a remote-control command" not in printed
+    assert "2026-09-07" in printed
+    assert "0x1005" in printed and "0x1006" in printed
+    assert "never been sent" in printed
+    assert "not verified" in printed
+
+
 def test_capabilities_labels_the_iq_f_monitor_refusal(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -710,3 +830,121 @@ def test_hexdump_truncates_with_a_count() -> None:
     """A 1935-byte UDP response must not fill a terminal, and must say it was cut."""
     rendered = hexdump(bytes(1935), limit=4)
     assert rendered.endswith("(1935 bytes)")
+
+
+# ========================================================================================
+# the long-running subcommands -- output has to arrive before the command blocks forever
+# ========================================================================================
+
+LONG_RUNNING = ("serve", "proxy")
+"""Subcommands that print and then block, instead of printing and then exiting.
+
+Everything else in ``SUBCOMMANDS`` returns, and returning flushes. These two do not:
+``serve`` waits on an ``asyncio.Event`` that is never set and ``proxy`` sits in
+``serve_forever``, so every line either arrives while the command is running or is
+never read at all. Python block-buffers stdout when it is not a terminal, which is
+exactly the case a harness creates by redirecting the command to a file.
+"""
+
+
+@pytest.mark.parametrize("name", LONG_RUNNING)
+def test_a_long_running_subcommand_flushes_every_line_it_prints(name: str) -> None:
+    """The rule, not the instance.
+
+    ``aslmp serve`` was found holding its whole banner -- including the ephemeral port
+    from its default ``--port 0``, which is written down nowhere else -- in an 8 KB
+    buffer for as long as the simulator was up. ``aslmp proxy`` had it too, and its
+    entire purpose is a running log: measured on this Windows 11 host on 2026-09-07, a
+    proxied ``aslmp read`` succeeded against 192.168.10.250:5003 while the redirected
+    proxy log stayed 0 bytes. An unflushed ``print`` in either of these is the same
+    defect wearing a different name, so it is a property of the module rather than a
+    test of one line.
+    """
+    module = PACKAGE / "tools" / f"{name}.py"
+    tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+    unflushed = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "print"
+        and not any(
+            keyword.arg == "flush"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in node.keywords
+        )
+    ]
+    assert not unflushed, (
+        f"aslmp/tools/{name}.py prints without flush=True at line(s) {unflushed}. This "
+        f"command blocks after printing, so an unflushed line is a line the operator "
+        f"never sees."
+    )
+
+
+def test_the_flush_scan_would_notice_an_unflushed_print() -> None:
+    """A meta-test, because a scan that matches nothing passes every file.
+
+    It also pins the comparison itself. ``ast`` nodes do not implement ``__eq__``, so
+    ``keyword.value == ast.Constant(True)`` is False for every node in every file and
+    the scan above would have passed on a module with no flush anywhere in it. This
+    test caught exactly that.
+    """
+    tree = ast.parse("print('a')\nprint('b', flush=True)\nprint('c', flush=x)\n")
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    flushed = [
+        any(
+            keyword.arg == "flush"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in call.keywords
+        )
+        for call in calls
+    ]
+    assert flushed == [False, True, False]
+
+
+def test_serve_flushes_its_banner_to_a_redirected_stdout(tmp_path: Path) -> None:
+    """Backgrounding the simulator with stdout on a file is how a harness uses it.
+
+    ``aslmp serve`` binds, prints the address of every entry, and then waits on an
+    ``asyncio.Event`` that is never set. Python block-buffers stdout when it is not a
+    terminal, so the banner sat in an 8 KB buffer for as long as the process was useful:
+    the log was empty, and with the default ``--port 0`` the ephemeral port the harness
+    needed was written down nowhere else.
+
+    The process is killed rather than asked to stop, deliberately. A kill discards the
+    buffer, so anything in the file was flushed while the simulator was running -- which
+    is the property, and the only way to assert it from outside.
+    """
+    log = tmp_path / "serve.log"
+    with log.open("w", encoding="utf-8") as sink:
+        process = subprocess.Popen(
+            [sys.executable, "-m", "aslmp.tools", "serve", "--host", "127.0.0.1"],
+            stdout=sink,
+            stderr=subprocess.STDOUT,
+            cwd=REPO_ROOT,
+        )
+        try:
+            deadline = time.monotonic() + 30.0
+            banner = ""
+            while time.monotonic() < deadline:
+                banner = log.read_text(encoding="utf-8", errors="replace")
+                if "Ctrl-C to stop." in banner:
+                    break
+                assert process.poll() is None, f"aslmp serve exited early:\n{banner}"
+                time.sleep(0.05)
+        finally:
+            process.kill()
+            process.wait(timeout=30)
+
+    assert "Ctrl-C to stop." in banner, (
+        f"aslmp serve did not flush its banner while it was running. What arrived in "
+        f"{log.name} before it was killed:\n{banner}"
+    )
+    ports = re.findall(r"127\.0\.0\.1:(\d+)", banner)
+    assert ports, f"the banner named no bound address:\n{banner}"
+    assert all(int(port) > 0 for port in ports), (
+        "an ephemeral entry reported port 0, so the banner is printed before the socket "
+        "is bound and a harness still cannot find it"
+    )

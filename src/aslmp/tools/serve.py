@@ -77,7 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         metavar="N",
-        help="fixed port for the plain TCP binary 3E entry (default: 0, an ephemeral port)",
+        help=(
+            "fixed port for the plain TCP binary 3E entry (default: 0, an ephemeral "
+            "port; whichever it lands on is printed in the address column below, and "
+            "that line is flushed as soon as the socket is bound)"
+        ),
     )
     parser.add_argument(
         "--healthy",
@@ -103,7 +107,7 @@ async def _stream_transcript(simulator: PlcSimulator) -> None:  # pragma: no cov
     while True:
         records = simulator.transcript
         for record in records[seen:]:
-            print(record)
+            print(record, flush=True)
         seen = len(records)
         await asyncio.sleep(0.1)
 
@@ -155,15 +159,22 @@ def run(argv: Sequence[str]) -> int:
                         entry.encoding.value,
                     ]
                 )
-            print(f"{target.label}  (model code 0x{target.model_code:04X})")
+            banner = [f"{target.label}  (model code 0x{target.model_code:04X})"]
             if not target.verified:
-                print(f"  {target.warn_if_unverified()}")
-            print(columns(rows))
-            print(
+                banner.append(f"  {target.warn_if_unverified()}")
+            banner.append(columns(rows))
+            banner.append(
                 "\nPathologies: "
                 + ("OFF (--healthy)" if args.healthy else "the measured FX5U set")
             )
-            print("Ctrl-C to stop.")
+            banner.append("Ctrl-C to stop.")
+            # Flushed, not printed and left in the buffer. The default --port is 0, so
+            # the banner's address column is the ONLY place the ephemeral port is
+            # written down -- and the obvious way a harness uses this command is to
+            # background it with stdout on a pipe or a file, where Python's block
+            # buffering holds 8 KB of banner until the process exits. That left the log
+            # empty and the port unknowable for as long as the simulator was useful.
+            print("\n".join(banner), flush=True)
             if args.transcript:
                 await _stream_transcript(simulator)
             else:
@@ -173,5 +184,5 @@ def run(argv: Sequence[str]) -> int:
     try:
         return asyncio.run(body())
     except KeyboardInterrupt:  # pragma: no cover -- needs a real signal
-        print("\nsimulator stopped")
+        print("\nsimulator stopped", flush=True)
         return EXIT_OK
