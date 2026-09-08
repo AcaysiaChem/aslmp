@@ -7,13 +7,26 @@ import time is **generated** from a table here and committed
 or ``aslmp.errors`` parses a TSV at run time, so the tables cost the wheel a few
 kilobytes and cost a control loop nothing.
 
-Every row carries the same eight-column provenance tail:
+Every row carries the same eleven-column provenance tail:
 
 ``provenance``
     ``live`` | ``manual`` | ``inferred`` (:class:`aslmp.wire.citations.Provenance`).
 ``cpu``, ``firmware``, ``measured``
     Required when ``provenance`` is ``live``, blank otherwise. A measured fact that
     does not name the silicon and the firmware it was measured on is a rumour.
+``host``, ``medium``, ``samples``
+    **Optional, and only on a ``live`` row.** Where the client ran, what it ran over,
+    and the ``n`` behind the number. They are optional because most rows here are not
+    timings and a device code answers the same over any medium; they exist because the
+    one row-shaped claim this project had to withdraw in public — "TCP wins the latency
+    tail" — was measured correctly and generalised past the link it came from. A row
+    fills them in when they could have changed the answer, and leaves them empty
+    rather than inventing them. See :class:`aslmp.wire.citations.Measurement`.
+
+    The column is ``medium`` and not ``link`` because ``limits.tsv`` already spends
+    ``link`` on the CPU-port-versus-ENET-module distinction, and a tail column that
+    collided with a table's own would be silently overwritten by :func:`read_table`'s
+    ``zip``. :data:`TABLES` is checked for that collision in ``test_citations.py``.
 ``manual``, ``revision``, ``section``
     A row in ``manuals.tsv``, its revision, and where in it. Required unless the row
     is purely a measurement.
@@ -52,6 +65,9 @@ PROVENANCE_TAIL: Final[tuple[str, ...]] = (
     "cpu",
     "firmware",
     "measured",
+    "host",
+    "medium",
+    "samples",
     "manual",
     "revision",
     "section",

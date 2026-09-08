@@ -1,13 +1,37 @@
 # Benchmarking
 
-## The two rules
+## The three rules
 
-**No table without a same-session raw-socket control**, and **no number without its link.**
+**No table without a same-session raw-socket control**, **no number without its link**, and
+**no ratio between two different clocks.**
 
 `aslmp bench` enforces the first (there is a `--no-control` flag whose only purpose is to be
 refused by name), and `bench/_report.py` raises `MissingControlError` if a report is assembled
-without one. The second is enforced by nothing but discipline, which is why it is written here
-in the same size as the first: it is the one this project has already broken.
+without one. The second and third are enforced by nothing but discipline, which is why they are
+written here in the same size as the first: the second is the one this project has already
+broken in public, and the third it broke quietly.
+
+## Why the third rule exists
+
+A speed-up is a ratio, and a ratio is only meaningful if its two halves were measured the same
+way. Ours were not. The published "**4.9x for block reads**" divided the block's **wire time**
+(7.75 ms, the library's own `wire_ms` stamp) by five separate reads' **wall time** (38.24 ms,
+`perf_counter` around the loop), so the numerator excluded the client's scheduling and the
+denominator included four helpings of it. The same hardware test records the like-for-like
+figure — `five_reads_wire_sum_p50_ms`, the sum of the five reads' own wire stamps — and prints
+it under `-s`; it is simply not the one that got published.
+
+The rule, then: **compare wire against wire, or wall against wall, and say which.** Where only
+the mismatched pair exists, publish both columns, name the asymmetry, and label any multiplier
+derived from them as an inference. A block read's actual argument does not need the multiplier
+anyway: five reads are five moments and one `0x0403` is one moment, and no latency column shows
+that.
+
+**And quote the `n`.** A percentile without its sample count cannot be given an error bar by
+the reader, which is how "+0.07 ms at p50" came to be published from n=120 with sd ~1.03 ms —
+where the standard error on a difference of medians is around 0.17 ms, more than twice the
+quantity claimed. `Measurement` and the shipped tables now have `host`, `medium` and `samples`
+columns so that a fact carries all three conditions with it.
 
 ## Why the second rule exists
 
@@ -63,6 +87,15 @@ means nothing until that is settled.
 Every run brackets the library's suites with a control. The **drift between the two is the
 honest error bar** on everything in between, and on a real plant network it is frequently larger
 than the thing being measured. Read that line before any other row.
+
+**One control is not a bracket, and a run with one is not publishable.**
+`tests/hardware/test_fx5u.py`'s latency test takes its raw-socket control once, before the
+library's samples, and the overhead figure that came out of it — "+0.07 ms at p50" — was
+published as though it had been bracketed. It had not, and at n=120 with sd ~1.03 ms the
+difference of medians has a standard error around 0.17 ms in any case, so the run could not
+have resolved 0.07 ms even bracketed. The restated claim is in `CHANGELOG.md`: the library's
+p50 was **indistinguishable from a raw socket's at this n**, which is the finding, and it is a
+better one than a number that implies a precision the run did not have.
 
 ## Distributions, never a mean
 

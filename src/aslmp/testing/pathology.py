@@ -52,6 +52,8 @@ COALESCING: Final = Measurement(
     cpu="FX5U-32MT/DS",
     firmware="1.065",
     date="2026-09-06",
+    host="192.168.10.41 (laptop)",
+    medium="wi-fi, ~7 ms median RTT",
     note=(
         "Two SLMP requests written before the first response is read arrive in one TCP "
         "segment and produce ONE response, for the LAST request, with end code 0x0000. "
@@ -67,12 +69,19 @@ ONE_CONNECTION: Final = Measurement(
     cpu="FX5U-32MT/DS",
     firmware="1.065",
     date="2026-09-06",
+    host="192.168.10.41 (laptop)",
+    medium="wi-fi, ~7 ms median RTT",
     note=(
         "A second TCP connection to a busy SLMP connection entry COMPLETES the handshake "
         "in 5.4 ms and is then closed by the CPU: recv() returns 0 bytes before anything "
-        "was sent. The incumbent connection is not disturbed and the slot frees "
-        "immediately on close. socket.connect() therefore proves nothing, and a "
-        "connection pool against one entry is worthless."
+        "was sent. The incumbent connection is not disturbed. socket.connect() therefore "
+        "proves nothing, and a connection pool against one entry is worthless. This note "
+        "said 'the slot frees immediately on close' until 2026-09-07; that clause is "
+        "WITHDRAWN. Measured wired from argus-bench, a reconnect within about 2 ms of a "
+        "clean close() is refused (1/6 at 0 ms, 6/6 from 2 ms), so the entry is released "
+        "as the CPU processes the FIN rather than instantly -- ambiguity "
+        "A-ENTRY-RELEASE-RACE. The window was invisible from this Wi-Fi host, which is "
+        "how the clause survived: 30/30 at every gap including 0 ms."
     ),
 )
 """H2. Why a zero-byte read on a fresh connection is its own named error."""
@@ -81,6 +90,8 @@ SEGMENTATION: Final = Measurement(
     cpu="FX5U-32MT/DS",
     firmware="1.065",
     date="2026-09-06",
+    host="192.168.10.41 (laptop)",
+    medium="wi-fi, ~7 ms median RTT",
     note=(
         "One of three identical 1931-byte responses arrived as two chunks, 1460 bytes "
         "then 471, 3.0 ms apart. Reads must be length-driven and the receive stamp taken "
@@ -93,6 +104,8 @@ SILENT_ON_CODING_MISMATCH: Final = Measurement(
     cpu="FX5U-32MT/DS",
     firmware="1.065",
     date="2026-09-06",
+    host="192.168.10.41 (laptop)",
+    medium="wi-fi, ~7 ms median RTT",
     note=(
         "An ASCII request sent to a binary connection entry produced no response at all "
         "-- no end code, no reset, nothing. Wrong frame type and an overstated data "
@@ -106,6 +119,8 @@ TS_ACCEPTED: Final = Measurement(
     cpu="FX5U-32MT/DS",
     firmware="1.065",
     date="2026-09-06",
+    host="192.168.10.41 (laptop)",
+    medium="wi-fi, ~7 ms median RTT",
     note=(
         "A 0403 Device Read Random carrying a word point at TS0 (device code 0xC1) "
         "returned end code 0x0000 and one word of data, although JY997D56001-K p.78 "
@@ -121,12 +136,19 @@ UDP_PIPELINE_LOSS: Final = Measurement(
     cpu="FX5U-32MT/DS",
     firmware="1.065",
     date="2026-09-06",
+    host="192.168.10.41 (laptop)",
+    medium="wi-fi, ~7 ms median RTT",
     note=(
         "4E requests fired without waiting: 8 of 8 and 32 of 32 came back, in order; at "
-        "64 only 44 came back. The 20 lost requests produced no end code, no ICMP and no "
-        "error of any kind -- the client learns only by timing out on a serial that "
-        "never returns. UDP does NOT suffer the TCP coalescing corruption: the same "
-        "two-requests-no-read test returns both responses correctly."
+        "64 only 44 came back over this link, which read as a soft ~31 percent loss. The "
+        "WIRED retest of 2026-09-07 shows that reading is the wrong SHAPE: from "
+        "argus-bench, depth 48 answered exactly 32 and depth 64 answered exactly 32, so "
+        "the queue is a hard ceiling of 32 and a slow link merely lets the CPU drain "
+        "part of it mid-burst. Design against 32, not against a percentage. Either way "
+        "the lost requests produce no end code, no ICMP and no error of any kind -- the "
+        "client learns only by timing out on a serial that never returns. UDP does NOT "
+        "suffer the TCP coalescing corruption: the same two-requests-no-read test "
+        "returns both responses correctly."
     ),
 )
 """Why a lost datagram must raise its own named error carrying serial and depth."""
@@ -168,6 +190,8 @@ PATHOLOGY_SOURCES: Final[Mapping[str, Source]] = {
         cpu="FX5U-32MT/DS",
         firmware="1.065",
         date="2026-09-06",
+        host="192.168.10.41 (laptop)",
+        medium="wi-fi, ~7 ms median RTT",
         note=(
             "A 4E frame sent to a connection entry configured for 3E was answered "
             "normally, with the serial echoed, although two Mitsubishi manuals say the "
@@ -178,6 +202,8 @@ PATHOLOGY_SOURCES: Final[Mapping[str, Source]] = {
         cpu="FX5U-32MT/DS",
         firmware="1.065",
         date="2026-09-06",
+        host="192.168.10.41 (laptop)",
+        medium="wi-fi, ~7 ms median RTT",
         note=(
             "The two subheader bytes after the 4E serial number are not free: the CPU "
             "returns them zeroed regardless of what was sent, so they are not a second "

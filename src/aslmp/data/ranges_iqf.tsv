@@ -14,168 +14,168 @@
 # is a DEFAULT that goes stale. profile.with_ranges() and `aslmp verify-ranges` exist
 # for that; validate_ranges=False turns span checking off entirely, but device
 # existence and point limits are properties of the silicon and are not defeatable.
-profile_key	device	present	first	last	points	radix	notation	configurable	provenance	cpu	firmware	measured	manual	revision	section	note
-melsec:iq-f/fx5u	X	yes	0	1023	1024	octal	X0 to X1777	no	live	FX5U-32MT/DS	1.065	2026-09-07	JY997D55301	F	2.6 Number of device points	GX Works3 shows octal digits; the wire carries the LINEAR index of that literal (Y20 -> 16), measured on FX5U-32MT/DS fw 1.065. Digits 8 and 9 are not legal in an X/Y literal and the CPU does NOT reject them, so the client must.
-melsec:iq-f/fx5u	Y	yes	0	1023	1024	octal	Y0 to Y1777	no	live	FX5U-32MT/DS	1.065	2026-09-07	JY997D55301	F	2.6 Number of device points	See the X row: octal literal, linear wire number, client-side rejection of the digits 8 and 9.
-melsec:iq-f/fx5u	M	yes	0	32767	32768	decimal	M0 to M32767	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	L	yes	0	32767	32768	decimal	L0 to L32767	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	F	yes	0	32767	32768	decimal	F0 to F32767	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	B	yes	0	32767	32768	hexadecimal	B0 to B7FFF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	SB	yes	0	32767	32768	hexadecimal	SB0 to SB7FFF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	S	yes	0	4095	4096	decimal	S0 to S4095	no	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	TS	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	TC	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	TN	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	STS	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	STC	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	STN	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	CS	yes	0	1023	1024	decimal	C0 to C1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	CC	yes	0	1023	1024	decimal	C0 to C1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	CN	yes	0	1023	1024	decimal	C0 to C1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	LCS	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
-melsec:iq-f/fx5u	LCC	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
-melsec:iq-f/fx5u	LCN	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
-melsec:iq-f/fx5u	W	yes	0	32767	32768	hexadecimal	W0 to W7FFF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	SW	yes	0	32767	32768	hexadecimal	SW0 to SW7FFF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	SM	yes	0	9999	10000	decimal	SM0 to SM9999	no	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	SD	yes	0	11999	12000	decimal	SD0 to SD11999	no	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	Z	yes	0	23	24	decimal	Z0 to Z23	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Z and LZ share one 24-word budget, so the two ceilings cannot both be taken.
-melsec:iq-f/fx5u	LZ	yes	0	11	12	decimal	LZ0 to LZ11	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	One LZ point is two words. Z and LZ share one 24-word budget.
-melsec:iq-f/fx5u	R	yes	0	32767	32768	decimal	R0 to R32767	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5u	D	yes	0	7999	8000	decimal	D0 to D7999	yes	live	FX5U-32MT/DS	1.065	2026-09-06	JY997D55401	unknown	14.4 Range of use of device points	Confirmed on hardware: D7999 with 1 point returned 0x0000, D8000 returned 0xC056, and D7999 with 2 POINTS also returned 0xC056 -- which is why check_range validates the span and not the start address.
-melsec:iq-f/fx5u	V	no							live	FX5U-32MT/DS	1.065	2026-09-06	JY997D56001	K	4.2 Device range (p.66-67)	V0 (device code 0x94, 16 bits) returned 0xC05C. Edge relay. Marked FX5-incompatible in the FX5 device-range table.
-melsec:iq-f/fx5u	ZR	no							live	FX5U-32MT/DS	1.065	2026-09-06	JY997D56001	K	4.2 Device range (p.66-67)	ZR0 (device code 0xB0) returned 0xC05C. Serial-access file register. Marked FX5-incompatible; use R instead.
-melsec:iq-f/fx5u	DX	no							live	FX5U-32MT/DS	1.065	2026-09-06	JY997D56001	K	4.2 Device range (p.66-67)	DX0 (device code 0xA2, 16 bits) returned 0xC05C. Direct access input. Not listed for FX5 at all.
-melsec:iq-f/fx5u	DY	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Direct access output. Not listed for FX5 at all.
-melsec:iq-f/fx5u	LTS	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long timer contact. Marked FX5-incompatible.
-melsec:iq-f/fx5u	LTC	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long timer coil. Marked FX5-incompatible.
-melsec:iq-f/fx5u	LTN	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long timer current value. Marked FX5-incompatible.
-melsec:iq-f/fx5u	LSTS	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer contact. Marked FX5-incompatible.
-melsec:iq-f/fx5u	LSTC	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer coil. Marked FX5-incompatible.
-melsec:iq-f/fx5u	LSTN	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer current value. Marked FX5-incompatible.
-melsec:iq-f/fx5u	RD	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Refresh data register. Not present on FX5.
-melsec:iq-f/fx5u	BL	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	SFC block device. Marked SLMP-incompatible in the FX5 table.
-melsec:iq-f/fx5u	G	yes				decimal		no	manual				JY997D56001	K	4.2 Device range (p.66-67)	Module access device U[n]\G. The range depends on which intelligent function module is mounted and on its buffer-memory size, so there is no static range to validate; it is also only reachable with the device-memory-extension subcommand.
-melsec:iq-f/fx5uc	X	yes	0	1023	1024	octal	X0 to X1777	no	manual				JY997D55401	unknown	14.4 Range of use of device points	GX Works3 shows octal digits; the wire carries the LINEAR index of that literal (Y20 -> 16), measured on FX5U-32MT/DS fw 1.065. Digits 8 and 9 are not legal in an X/Y literal and the CPU does NOT reject them, so the client must.
-melsec:iq-f/fx5uc	Y	yes	0	1023	1024	octal	Y0 to Y1777	no	manual				JY997D55401	unknown	14.4 Range of use of device points	See the X row: octal literal, linear wire number, client-side rejection of the digits 8 and 9.
-melsec:iq-f/fx5uc	M	yes	0	32767	32768	decimal	M0 to M32767	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	L	yes	0	32767	32768	decimal	L0 to L32767	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	F	yes	0	32767	32768	decimal	F0 to F32767	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	B	yes	0	32767	32768	hexadecimal	B0 to B7FFF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	SB	yes	0	32767	32768	hexadecimal	SB0 to SB7FFF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	S	yes	0	4095	4096	decimal	S0 to S4095	no	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	TS	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	TC	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	TN	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	STS	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	STC	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	STN	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	CS	yes	0	1023	1024	decimal	C0 to C1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	CC	yes	0	1023	1024	decimal	C0 to C1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	CN	yes	0	1023	1024	decimal	C0 to C1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	LCS	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
-melsec:iq-f/fx5uc	LCC	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
-melsec:iq-f/fx5uc	LCN	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
-melsec:iq-f/fx5uc	W	yes	0	32767	32768	hexadecimal	W0 to W7FFF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	SW	yes	0	32767	32768	hexadecimal	SW0 to SW7FFF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	SM	yes	0	9999	10000	decimal	SM0 to SM9999	no	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	SD	yes	0	11999	12000	decimal	SD0 to SD11999	no	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	Z	yes	0	23	24	decimal	Z0 to Z23	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Z and LZ share one 24-word budget, so the two ceilings cannot both be taken.
-melsec:iq-f/fx5uc	LZ	yes	0	11	12	decimal	LZ0 to LZ11	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	One LZ point is two words. Z and LZ share one 24-word budget.
-melsec:iq-f/fx5uc	R	yes	0	32767	32768	decimal	R0 to R32767	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	D	yes	0	7999	8000	decimal	D0 to D7999	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uc	V	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Edge relay. Marked FX5-incompatible in the FX5 device-range table.
-melsec:iq-f/fx5uc	ZR	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Serial-access file register. Marked FX5-incompatible; use R instead.
-melsec:iq-f/fx5uc	DX	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Direct access input. Not listed for FX5 at all.
-melsec:iq-f/fx5uc	DY	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Direct access output. Not listed for FX5 at all.
-melsec:iq-f/fx5uc	LTS	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long timer contact. Marked FX5-incompatible.
-melsec:iq-f/fx5uc	LTC	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long timer coil. Marked FX5-incompatible.
-melsec:iq-f/fx5uc	LTN	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long timer current value. Marked FX5-incompatible.
-melsec:iq-f/fx5uc	LSTS	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer contact. Marked FX5-incompatible.
-melsec:iq-f/fx5uc	LSTC	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer coil. Marked FX5-incompatible.
-melsec:iq-f/fx5uc	LSTN	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer current value. Marked FX5-incompatible.
-melsec:iq-f/fx5uc	RD	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Refresh data register. Not present on FX5.
-melsec:iq-f/fx5uc	BL	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	SFC block device. Marked SLMP-incompatible in the FX5 table.
-melsec:iq-f/fx5uc	G	yes				decimal		no	manual				JY997D56001	K	4.2 Device range (p.66-67)	Module access device U[n]\G. The range depends on which intelligent function module is mounted and on its buffer-memory size, so there is no static range to validate; it is also only reachable with the device-memory-extension subcommand.
-melsec:iq-f/fx5uj	X	yes	0	1023	1024	octal	X0 to X1777	no	inferred				JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it. GX Works3 shows octal digits; the wire carries the LINEAR index of that literal (Y20 -> 16), measured on FX5U-32MT/DS fw 1.065. Digits 8 and 9 are not legal in an X/Y literal and the CPU does NOT reject them, so the client must.
-melsec:iq-f/fx5uj	Y	yes	0	1023	1024	octal	Y0 to Y1777	no	inferred				JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it. See the X row: octal literal, linear wire number, client-side rejection of the digits 8 and 9.
-melsec:iq-f/fx5uj	M	yes	0	7679	7680	decimal	M0 to M7679	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	L	yes	0	7679	7680	decimal	L0 to L7679	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	F	yes	0	127	128	decimal	F0 to F127	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	B	yes	0	2047	2048	hexadecimal	B0 to B7FF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	SB	yes	0	2047	2048	hexadecimal	SB0 to SB7FF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	S	yes	0	4095	4096	decimal	S0 to S4095	no	inferred				JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it.
-melsec:iq-f/fx5uj	TS	yes	0	511	512	decimal	T0 to T511	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	TC	yes	0	511	512	decimal	T0 to T511	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	TN	yes	0	511	512	decimal	T0 to T511	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	STS	yes	0	15	16	decimal	ST0 to ST15	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	STC	yes	0	15	16	decimal	ST0 to ST15	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	STN	yes	0	15	16	decimal	ST0 to ST15	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	CS	yes	0	255	256	decimal	C0 to C255	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	CC	yes	0	255	256	decimal	C0 to C255	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	CN	yes	0	255	256	decimal	C0 to C255	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	LCS	yes	0	63	64	decimal	LC0 to LC63	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
-melsec:iq-f/fx5uj	LCC	yes	0	63	64	decimal	LC0 to LC63	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
-melsec:iq-f/fx5uj	LCN	yes	0	63	64	decimal	LC0 to LC63	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
-melsec:iq-f/fx5uj	W	yes	0	1023	1024	hexadecimal	W0 to W3FF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	SW	yes	0	1023	1024	hexadecimal	SW0 to SW3FF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5uj	SM	yes	0	9999	10000	decimal	SM0 to SM9999	no	inferred				JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it.
-melsec:iq-f/fx5uj	SD	yes	0	11999	12000	decimal	SD0 to SD11999	no	inferred				JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it.
-melsec:iq-f/fx5uj	Z	yes	0	23	24	decimal	Z0 to Z23	yes	inferred				JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it. Z and LZ share one 24-word budget, so the two ceilings cannot both be taken.
-melsec:iq-f/fx5uj	LZ	yes	0	11	12	decimal	LZ0 to LZ11	yes	inferred				JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it. One LZ point is two words. Z and LZ share one 24-word budget.
-melsec:iq-f/fx5uj	R	yes	0	32767	32768	decimal	R0 to R32767	yes	inferred				JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it.
-melsec:iq-f/fx5uj	D	yes	0	7999	8000	decimal	D0 to D7999	yes	inferred				JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it.
-melsec:iq-f/fx5uj	V	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Edge relay. Marked FX5-incompatible in the FX5 device-range table.
-melsec:iq-f/fx5uj	ZR	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Serial-access file register. Marked FX5-incompatible; use R instead.
-melsec:iq-f/fx5uj	DX	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Direct access input. Not listed for FX5 at all.
-melsec:iq-f/fx5uj	DY	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Direct access output. Not listed for FX5 at all.
-melsec:iq-f/fx5uj	LTS	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long timer contact. Marked FX5-incompatible.
-melsec:iq-f/fx5uj	LTC	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long timer coil. Marked FX5-incompatible.
-melsec:iq-f/fx5uj	LTN	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long timer current value. Marked FX5-incompatible.
-melsec:iq-f/fx5uj	LSTS	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer contact. Marked FX5-incompatible.
-melsec:iq-f/fx5uj	LSTC	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer coil. Marked FX5-incompatible.
-melsec:iq-f/fx5uj	LSTN	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer current value. Marked FX5-incompatible.
-melsec:iq-f/fx5uj	RD	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Refresh data register. Not present on FX5.
-melsec:iq-f/fx5uj	BL	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	SFC block device. Marked SLMP-incompatible in the FX5 table.
-melsec:iq-f/fx5uj	G	yes				decimal		no	manual				JY997D56001	K	4.2 Device range (p.66-67)	Module access device U[n]\G. The range depends on which intelligent function module is mounted and on its buffer-memory size, so there is no static range to validate; it is also only reachable with the device-memory-extension subcommand.
-melsec:iq-f/fx5s	X	yes	0	1023	1024	octal	X0 to X1777	no	manual				JY997D55401	unknown	14.4 Range of use of device points	GX Works3 shows octal digits; the wire carries the LINEAR index of that literal (Y20 -> 16), measured on FX5U-32MT/DS fw 1.065. Digits 8 and 9 are not legal in an X/Y literal and the CPU does NOT reject them, so the client must.
-melsec:iq-f/fx5s	Y	yes	0	1023	1024	octal	Y0 to Y1777	no	manual				JY997D55401	unknown	14.4 Range of use of device points	See the X row: octal literal, linear wire number, client-side rejection of the digits 8 and 9.
-melsec:iq-f/fx5s	M	yes	0	32767	32768	decimal	M0 to M32767	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	L	yes	0	32767	32768	decimal	L0 to L32767	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	F	yes	0	32767	32768	decimal	F0 to F32767	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	B	yes	0	32767	32768	hexadecimal	B0 to B7FFF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	SB	yes	0	32767	32768	hexadecimal	SB0 to SB7FFF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	S	yes	0	4095	4096	decimal	S0 to S4095	no	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	TS	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	TC	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	TN	yes	0	1023	1024	decimal	T0 to T1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	STS	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	STC	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	STN	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	CS	yes	0	1023	1024	decimal	C0 to C1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	CC	yes	0	1023	1024	decimal	C0 to C1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	CN	yes	0	1023	1024	decimal	C0 to C1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	LCS	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
-melsec:iq-f/fx5s	LCC	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
-melsec:iq-f/fx5s	LCN	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
-melsec:iq-f/fx5s	W	yes	0	32767	32768	hexadecimal	W0 to W7FFF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	SW	yes	0	32767	32768	hexadecimal	SW0 to SW7FFF	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	SM	yes	0	9999	10000	decimal	SM0 to SM9999	no	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	SD	yes	0	11999	12000	decimal	SD0 to SD11999	no	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	Z	yes	0	23	24	decimal	Z0 to Z23	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	Z and LZ share one 24-word budget, so the two ceilings cannot both be taken.
-melsec:iq-f/fx5s	LZ	yes	0	11	12	decimal	LZ0 to LZ11	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	One LZ point is two words. Z and LZ share one 24-word budget.
-melsec:iq-f/fx5s	R	yes	0	32767	32768	decimal	R0 to R32767	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	D	yes	0	7999	8000	decimal	D0 to D7999	yes	manual				JY997D55401	unknown	14.4 Range of use of device points	
-melsec:iq-f/fx5s	V	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Edge relay. Marked FX5-incompatible in the FX5 device-range table.
-melsec:iq-f/fx5s	ZR	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Serial-access file register. Marked FX5-incompatible; use R instead.
-melsec:iq-f/fx5s	DX	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Direct access input. Not listed for FX5 at all.
-melsec:iq-f/fx5s	DY	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Direct access output. Not listed for FX5 at all.
-melsec:iq-f/fx5s	LTS	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long timer contact. Marked FX5-incompatible.
-melsec:iq-f/fx5s	LTC	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long timer coil. Marked FX5-incompatible.
-melsec:iq-f/fx5s	LTN	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long timer current value. Marked FX5-incompatible.
-melsec:iq-f/fx5s	LSTS	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer contact. Marked FX5-incompatible.
-melsec:iq-f/fx5s	LSTC	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer coil. Marked FX5-incompatible.
-melsec:iq-f/fx5s	LSTN	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer current value. Marked FX5-incompatible.
-melsec:iq-f/fx5s	RD	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	Refresh data register. Not present on FX5.
-melsec:iq-f/fx5s	BL	no							manual				JY997D56001	K	4.2 Device range (p.66-67)	SFC block device. Marked SLMP-incompatible in the FX5 table.
-melsec:iq-f/fx5s	G	yes				decimal		no	manual				JY997D56001	K	4.2 Device range (p.66-67)	Module access device U[n]\G. The range depends on which intelligent function module is mounted and on its buffer-memory size, so there is no static range to validate; it is also only reachable with the device-memory-extension subcommand.
+profile_key	device	present	first	last	points	radix	notation	configurable	provenance	cpu	firmware	measured	host	medium	samples	manual	revision	section	note
+melsec:iq-f/fx5u	X	yes	0	1023	1024	octal	X0 to X1777	no	live	FX5U-32MT/DS	1.065	2026-09-07				JY997D55301	F	2.6 Number of device points	GX Works3 shows octal digits; the wire carries the LINEAR index of that literal (Y20 -> 16), measured on FX5U-32MT/DS fw 1.065. Digits 8 and 9 are not legal in an X/Y literal and the CPU does NOT reject them, so the client must.
+melsec:iq-f/fx5u	Y	yes	0	1023	1024	octal	Y0 to Y1777	no	live	FX5U-32MT/DS	1.065	2026-09-07				JY997D55301	F	2.6 Number of device points	See the X row: octal literal, linear wire number, client-side rejection of the digits 8 and 9.
+melsec:iq-f/fx5u	M	yes	0	32767	32768	decimal	M0 to M32767	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	L	yes	0	32767	32768	decimal	L0 to L32767	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	F	yes	0	32767	32768	decimal	F0 to F32767	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	B	yes	0	32767	32768	hexadecimal	B0 to B7FFF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	SB	yes	0	32767	32768	hexadecimal	SB0 to SB7FFF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	S	yes	0	4095	4096	decimal	S0 to S4095	no	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	TS	yes	0	1023	1024	decimal	T0 to T1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	TC	yes	0	1023	1024	decimal	T0 to T1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	TN	yes	0	1023	1024	decimal	T0 to T1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	STS	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	STC	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	STN	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	CS	yes	0	1023	1024	decimal	C0 to C1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	CC	yes	0	1023	1024	decimal	C0 to C1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	CN	yes	0	1023	1024	decimal	C0 to C1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	LCS	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
+melsec:iq-f/fx5u	LCC	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
+melsec:iq-f/fx5u	LCN	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
+melsec:iq-f/fx5u	W	yes	0	32767	32768	hexadecimal	W0 to W7FFF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	SW	yes	0	32767	32768	hexadecimal	SW0 to SW7FFF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	SM	yes	0	9999	10000	decimal	SM0 to SM9999	no	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	SD	yes	0	11999	12000	decimal	SD0 to SD11999	no	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	Z	yes	0	23	24	decimal	Z0 to Z23	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Z and LZ share one 24-word budget, so the two ceilings cannot both be taken.
+melsec:iq-f/fx5u	LZ	yes	0	11	12	decimal	LZ0 to LZ11	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	One LZ point is two words. Z and LZ share one 24-word budget.
+melsec:iq-f/fx5u	R	yes	0	32767	32768	decimal	R0 to R32767	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5u	D	yes	0	7999	8000	decimal	D0 to D7999	yes	live	FX5U-32MT/DS	1.065	2026-09-06	192.168.10.41 (laptop)	wi-fi, ~7 ms median RTT		JY997D55401	unknown	14.4 Range of use of device points	Confirmed on hardware: D7999 with 1 point returned 0x0000, D8000 returned 0xC056, and D7999 with 2 POINTS also returned 0xC056 -- which is why check_range validates the span and not the start address.
+melsec:iq-f/fx5u	V	no							live	FX5U-32MT/DS	1.065	2026-09-06	192.168.10.41 (laptop)	wi-fi, ~7 ms median RTT		JY997D56001	K	4.2 Device range (p.66-67)	V0 (device code 0x94, 16 bits) returned 0xC05C. Edge relay. Marked FX5-incompatible in the FX5 device-range table.
+melsec:iq-f/fx5u	ZR	no							live	FX5U-32MT/DS	1.065	2026-09-06	192.168.10.41 (laptop)	wi-fi, ~7 ms median RTT		JY997D56001	K	4.2 Device range (p.66-67)	ZR0 (device code 0xB0) returned 0xC05C. Serial-access file register. Marked FX5-incompatible; use R instead.
+melsec:iq-f/fx5u	DX	no							live	FX5U-32MT/DS	1.065	2026-09-06	192.168.10.41 (laptop)	wi-fi, ~7 ms median RTT		JY997D56001	K	4.2 Device range (p.66-67)	DX0 (device code 0xA2, 16 bits) returned 0xC05C. Direct access input. Not listed for FX5 at all.
+melsec:iq-f/fx5u	DY	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Direct access output. Not listed for FX5 at all.
+melsec:iq-f/fx5u	LTS	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long timer contact. Marked FX5-incompatible.
+melsec:iq-f/fx5u	LTC	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long timer coil. Marked FX5-incompatible.
+melsec:iq-f/fx5u	LTN	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long timer current value. Marked FX5-incompatible.
+melsec:iq-f/fx5u	LSTS	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer contact. Marked FX5-incompatible.
+melsec:iq-f/fx5u	LSTC	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer coil. Marked FX5-incompatible.
+melsec:iq-f/fx5u	LSTN	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer current value. Marked FX5-incompatible.
+melsec:iq-f/fx5u	RD	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Refresh data register. Not present on FX5.
+melsec:iq-f/fx5u	BL	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	SFC block device. Marked SLMP-incompatible in the FX5 table.
+melsec:iq-f/fx5u	G	yes				decimal		no	manual							JY997D56001	K	4.2 Device range (p.66-67)	Module access device U[n]\G. The range depends on which intelligent function module is mounted and on its buffer-memory size, so there is no static range to validate; it is also only reachable with the device-memory-extension subcommand.
+melsec:iq-f/fx5uc	X	yes	0	1023	1024	octal	X0 to X1777	no	manual							JY997D55401	unknown	14.4 Range of use of device points	GX Works3 shows octal digits; the wire carries the LINEAR index of that literal (Y20 -> 16), measured on FX5U-32MT/DS fw 1.065. Digits 8 and 9 are not legal in an X/Y literal and the CPU does NOT reject them, so the client must.
+melsec:iq-f/fx5uc	Y	yes	0	1023	1024	octal	Y0 to Y1777	no	manual							JY997D55401	unknown	14.4 Range of use of device points	See the X row: octal literal, linear wire number, client-side rejection of the digits 8 and 9.
+melsec:iq-f/fx5uc	M	yes	0	32767	32768	decimal	M0 to M32767	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	L	yes	0	32767	32768	decimal	L0 to L32767	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	F	yes	0	32767	32768	decimal	F0 to F32767	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	B	yes	0	32767	32768	hexadecimal	B0 to B7FFF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	SB	yes	0	32767	32768	hexadecimal	SB0 to SB7FFF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	S	yes	0	4095	4096	decimal	S0 to S4095	no	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	TS	yes	0	1023	1024	decimal	T0 to T1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	TC	yes	0	1023	1024	decimal	T0 to T1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	TN	yes	0	1023	1024	decimal	T0 to T1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	STS	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	STC	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	STN	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	CS	yes	0	1023	1024	decimal	C0 to C1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	CC	yes	0	1023	1024	decimal	C0 to C1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	CN	yes	0	1023	1024	decimal	C0 to C1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	LCS	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
+melsec:iq-f/fx5uc	LCC	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
+melsec:iq-f/fx5uc	LCN	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
+melsec:iq-f/fx5uc	W	yes	0	32767	32768	hexadecimal	W0 to W7FFF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	SW	yes	0	32767	32768	hexadecimal	SW0 to SW7FFF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	SM	yes	0	9999	10000	decimal	SM0 to SM9999	no	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	SD	yes	0	11999	12000	decimal	SD0 to SD11999	no	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	Z	yes	0	23	24	decimal	Z0 to Z23	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Z and LZ share one 24-word budget, so the two ceilings cannot both be taken.
+melsec:iq-f/fx5uc	LZ	yes	0	11	12	decimal	LZ0 to LZ11	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	One LZ point is two words. Z and LZ share one 24-word budget.
+melsec:iq-f/fx5uc	R	yes	0	32767	32768	decimal	R0 to R32767	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	D	yes	0	7999	8000	decimal	D0 to D7999	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uc	V	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Edge relay. Marked FX5-incompatible in the FX5 device-range table.
+melsec:iq-f/fx5uc	ZR	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Serial-access file register. Marked FX5-incompatible; use R instead.
+melsec:iq-f/fx5uc	DX	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Direct access input. Not listed for FX5 at all.
+melsec:iq-f/fx5uc	DY	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Direct access output. Not listed for FX5 at all.
+melsec:iq-f/fx5uc	LTS	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long timer contact. Marked FX5-incompatible.
+melsec:iq-f/fx5uc	LTC	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long timer coil. Marked FX5-incompatible.
+melsec:iq-f/fx5uc	LTN	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long timer current value. Marked FX5-incompatible.
+melsec:iq-f/fx5uc	LSTS	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer contact. Marked FX5-incompatible.
+melsec:iq-f/fx5uc	LSTC	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer coil. Marked FX5-incompatible.
+melsec:iq-f/fx5uc	LSTN	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer current value. Marked FX5-incompatible.
+melsec:iq-f/fx5uc	RD	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Refresh data register. Not present on FX5.
+melsec:iq-f/fx5uc	BL	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	SFC block device. Marked SLMP-incompatible in the FX5 table.
+melsec:iq-f/fx5uc	G	yes				decimal		no	manual							JY997D56001	K	4.2 Device range (p.66-67)	Module access device U[n]\G. The range depends on which intelligent function module is mounted and on its buffer-memory size, so there is no static range to validate; it is also only reachable with the device-memory-extension subcommand.
+melsec:iq-f/fx5uj	X	yes	0	1023	1024	octal	X0 to X1777	no	inferred							JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it. GX Works3 shows octal digits; the wire carries the LINEAR index of that literal (Y20 -> 16), measured on FX5U-32MT/DS fw 1.065. Digits 8 and 9 are not legal in an X/Y literal and the CPU does NOT reject them, so the client must.
+melsec:iq-f/fx5uj	Y	yes	0	1023	1024	octal	Y0 to Y1777	no	inferred							JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it. See the X row: octal literal, linear wire number, client-side rejection of the digits 8 and 9.
+melsec:iq-f/fx5uj	M	yes	0	7679	7680	decimal	M0 to M7679	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	L	yes	0	7679	7680	decimal	L0 to L7679	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	F	yes	0	127	128	decimal	F0 to F127	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	B	yes	0	2047	2048	hexadecimal	B0 to B7FF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	SB	yes	0	2047	2048	hexadecimal	SB0 to SB7FF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	S	yes	0	4095	4096	decimal	S0 to S4095	no	inferred							JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it.
+melsec:iq-f/fx5uj	TS	yes	0	511	512	decimal	T0 to T511	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	TC	yes	0	511	512	decimal	T0 to T511	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	TN	yes	0	511	512	decimal	T0 to T511	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	STS	yes	0	15	16	decimal	ST0 to ST15	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	STC	yes	0	15	16	decimal	ST0 to ST15	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	STN	yes	0	15	16	decimal	ST0 to ST15	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	CS	yes	0	255	256	decimal	C0 to C255	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	CC	yes	0	255	256	decimal	C0 to C255	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	CN	yes	0	255	256	decimal	C0 to C255	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	LCS	yes	0	63	64	decimal	LC0 to LC63	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
+melsec:iq-f/fx5uj	LCC	yes	0	63	64	decimal	LC0 to LC63	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
+melsec:iq-f/fx5uj	LCN	yes	0	63	64	decimal	LC0 to LC63	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
+melsec:iq-f/fx5uj	W	yes	0	1023	1024	hexadecimal	W0 to W3FF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	SW	yes	0	1023	1024	hexadecimal	SW0 to SW3FF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5uj	SM	yes	0	9999	10000	decimal	SM0 to SM9999	no	inferred							JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it.
+melsec:iq-f/fx5uj	SD	yes	0	11999	12000	decimal	SD0 to SD11999	no	inferred							JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it.
+melsec:iq-f/fx5uj	Z	yes	0	23	24	decimal	Z0 to Z23	yes	inferred							JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it. Z and LZ share one 24-word budget, so the two ceilings cannot both be taken.
+melsec:iq-f/fx5uj	LZ	yes	0	11	12	decimal	LZ0 to LZ11	yes	inferred							JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it. One LZ point is two words. Z and LZ share one 24-word budget.
+melsec:iq-f/fx5uj	R	yes	0	32767	32768	decimal	R0 to R32767	yes	inferred							JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it.
+melsec:iq-f/fx5uj	D	yes	0	7999	8000	decimal	D0 to D7999	yes	inferred							JY997D55401	unknown	14.4 Range of use of device points	INFERRED: the FX5UJ figure was not separately documented in the sources read; this is the FX5U figure carried across. Run `aslmp verify-ranges` against the CPU before relying on it.
+melsec:iq-f/fx5uj	V	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Edge relay. Marked FX5-incompatible in the FX5 device-range table.
+melsec:iq-f/fx5uj	ZR	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Serial-access file register. Marked FX5-incompatible; use R instead.
+melsec:iq-f/fx5uj	DX	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Direct access input. Not listed for FX5 at all.
+melsec:iq-f/fx5uj	DY	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Direct access output. Not listed for FX5 at all.
+melsec:iq-f/fx5uj	LTS	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long timer contact. Marked FX5-incompatible.
+melsec:iq-f/fx5uj	LTC	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long timer coil. Marked FX5-incompatible.
+melsec:iq-f/fx5uj	LTN	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long timer current value. Marked FX5-incompatible.
+melsec:iq-f/fx5uj	LSTS	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer contact. Marked FX5-incompatible.
+melsec:iq-f/fx5uj	LSTC	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer coil. Marked FX5-incompatible.
+melsec:iq-f/fx5uj	LSTN	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer current value. Marked FX5-incompatible.
+melsec:iq-f/fx5uj	RD	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Refresh data register. Not present on FX5.
+melsec:iq-f/fx5uj	BL	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	SFC block device. Marked SLMP-incompatible in the FX5 table.
+melsec:iq-f/fx5uj	G	yes				decimal		no	manual							JY997D56001	K	4.2 Device range (p.66-67)	Module access device U[n]\G. The range depends on which intelligent function module is mounted and on its buffer-memory size, so there is no static range to validate; it is also only reachable with the device-memory-extension subcommand.
+melsec:iq-f/fx5s	X	yes	0	1023	1024	octal	X0 to X1777	no	manual							JY997D55401	unknown	14.4 Range of use of device points	GX Works3 shows octal digits; the wire carries the LINEAR index of that literal (Y20 -> 16), measured on FX5U-32MT/DS fw 1.065. Digits 8 and 9 are not legal in an X/Y literal and the CPU does NOT reject them, so the client must.
+melsec:iq-f/fx5s	Y	yes	0	1023	1024	octal	Y0 to Y1777	no	manual							JY997D55401	unknown	14.4 Range of use of device points	See the X row: octal literal, linear wire number, client-side rejection of the digits 8 and 9.
+melsec:iq-f/fx5s	M	yes	0	32767	32768	decimal	M0 to M32767	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	L	yes	0	32767	32768	decimal	L0 to L32767	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	F	yes	0	32767	32768	decimal	F0 to F32767	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	B	yes	0	32767	32768	hexadecimal	B0 to B7FFF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	SB	yes	0	32767	32768	hexadecimal	SB0 to SB7FFF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	S	yes	0	4095	4096	decimal	S0 to S4095	no	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	TS	yes	0	1023	1024	decimal	T0 to T1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	TC	yes	0	1023	1024	decimal	T0 to T1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	TN	yes	0	1023	1024	decimal	T0 to T1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	STS	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	STC	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	STN	yes	0	1023	1024	decimal	ST0 to ST1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	CS	yes	0	1023	1024	decimal	C0 to C1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	CC	yes	0	1023	1024	decimal	C0 to C1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	CN	yes	0	1023	1024	decimal	C0 to C1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	LCS	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
+melsec:iq-f/fx5s	LCC	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
+melsec:iq-f/fx5s	LCN	yes	0	1023	1024	decimal	LC0 to LC1023	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Present on FX5 per the device-range table, but only reachable with subcommand 0002/0003, which an FX5U rejects with 0xC059 (measured).
+melsec:iq-f/fx5s	W	yes	0	32767	32768	hexadecimal	W0 to W7FFF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	SW	yes	0	32767	32768	hexadecimal	SW0 to SW7FFF	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	SM	yes	0	9999	10000	decimal	SM0 to SM9999	no	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	SD	yes	0	11999	12000	decimal	SD0 to SD11999	no	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	Z	yes	0	23	24	decimal	Z0 to Z23	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	Z and LZ share one 24-word budget, so the two ceilings cannot both be taken.
+melsec:iq-f/fx5s	LZ	yes	0	11	12	decimal	LZ0 to LZ11	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	One LZ point is two words. Z and LZ share one 24-word budget.
+melsec:iq-f/fx5s	R	yes	0	32767	32768	decimal	R0 to R32767	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	D	yes	0	7999	8000	decimal	D0 to D7999	yes	manual							JY997D55401	unknown	14.4 Range of use of device points	
+melsec:iq-f/fx5s	V	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Edge relay. Marked FX5-incompatible in the FX5 device-range table.
+melsec:iq-f/fx5s	ZR	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Serial-access file register. Marked FX5-incompatible; use R instead.
+melsec:iq-f/fx5s	DX	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Direct access input. Not listed for FX5 at all.
+melsec:iq-f/fx5s	DY	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Direct access output. Not listed for FX5 at all.
+melsec:iq-f/fx5s	LTS	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long timer contact. Marked FX5-incompatible.
+melsec:iq-f/fx5s	LTC	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long timer coil. Marked FX5-incompatible.
+melsec:iq-f/fx5s	LTN	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long timer current value. Marked FX5-incompatible.
+melsec:iq-f/fx5s	LSTS	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer contact. Marked FX5-incompatible.
+melsec:iq-f/fx5s	LSTC	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer coil. Marked FX5-incompatible.
+melsec:iq-f/fx5s	LSTN	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Long retentive timer current value. Marked FX5-incompatible.
+melsec:iq-f/fx5s	RD	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	Refresh data register. Not present on FX5.
+melsec:iq-f/fx5s	BL	no							manual							JY997D56001	K	4.2 Device range (p.66-67)	SFC block device. Marked SLMP-incompatible in the FX5 table.
+melsec:iq-f/fx5s	G	yes				decimal		no	manual							JY997D56001	K	4.2 Device range (p.66-67)	Module access device U[n]\G. The range depends on which intelligent function module is mounted and on its buffer-memory size, so there is no static range to validate; it is also only reachable with the device-memory-extension subcommand.

@@ -1,7 +1,9 @@
 """MELSEC iQ-F FX5S. Same device points as the FX5U in the tables we read.
 
 Layer 1. **Unverified**, like every profile in this package except the FX5U: all
-``Provenance.MANUAL``.
+``Provenance.MANUAL`` or ``INFERRED``, apart from the two refusals carried across from the
+FX5U (monitor and the long device specification), which keep that CPU's measurement and so
+report ``LIVE``. See :mod:`aslmp.profiles.fx5uc`.
 
 The four model codes ``0x4B55``-``0x4B58`` carry a caveat of their own. The survey's
 extract of JY997D56001-K p.110 read "FX5S-30/40/60 MT/ES, 80MT/ESS" against that block,

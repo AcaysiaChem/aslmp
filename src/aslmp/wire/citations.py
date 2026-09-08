@@ -117,23 +117,49 @@ class Citation:
 
 @dataclass(frozen=True, slots=True)
 class Measurement:
-    """A fact observed on real hardware, naming the hardware.
+    """A fact observed on real hardware, naming the hardware and the conditions.
 
     A measurement outranks a manual everywhere in this library, so it has to say
     which silicon it came from: ``FX5U-32MT/DS`` firmware ``1.065`` is not evidence
     about an R04CPU, and a firmware update can invalidate every row that names it.
+
+    ``host``, ``medium`` and ``samples`` are the three conditions that are not the
+    silicon, and they are here because leaving them out **cost this project a
+    published claim**: "TCP wins the latency tail" was measured correctly, over
+    Wi-Fi, and generalised to SLMP. A wired retest overturned it. They are optional
+    because most rows here are not timings — a device code that answers ``0xC05C``
+    answers it on any link — so a row states them when they could have changed the
+    answer, and stays silent rather than inventing them when they were not written
+    down.
+
+    ``host``
+        Where the client ran, precisely enough to go back to it: an address, a name,
+        or both (``"192.168.10.41 (laptop)"``).
+    ``medium``
+        What ran between that host and the CPU (``"wi-fi"``, ``"wired"``), with the
+        median RTT if it is known. It is ``medium`` rather than ``link`` because
+        ``limits.tsv`` already spends that word on the CPU port against the FX5-ENET
+        module, and the shipped tables carry these same three columns.
+    ``samples``
+        The ``n`` behind the row's number. A positive integer or nothing; a
+        percentile quoted without its ``n`` cannot be given an error bar by a reader.
     """
 
     cpu: str
     firmware: str
     date: str
     note: str = ""
+    host: str = ""
+    medium: str = ""
+    samples: int | None = None
 
     def __post_init__(self) -> None:
         _text(self.cpu, "Measurement", "cpu")
         _text(self.firmware, "Measurement", "firmware")
         _text(self.date, "Measurement", "date")
         _optional_text(self.note, "Measurement", "note")
+        _optional_text(self.host, "Measurement", "host")
+        _optional_text(self.medium, "Measurement", "medium")
         if _ISO_DATE.match(self.date) is None:
             raise ValueError(
                 f"Measurement.date must be an ISO YYYY-MM-DD date; got {self.date!r}"
@@ -144,6 +170,17 @@ class Measurement:
             raise ValueError(
                 f"Measurement.date is not a real calendar date: {self.date!r}"
             ) from exc
+        if self.samples is not None:
+            if not isinstance(self.samples, int) or isinstance(self.samples, bool):
+                raise TypeError(
+                    f"Measurement.samples is a sample count, so it is an int or None, "
+                    f"not {type(self.samples).__name__}"
+                )
+            if self.samples < 1:
+                raise ValueError(
+                    f"Measurement.samples must be at least 1; got {self.samples}. "
+                    f"Leave it None when a count is not what the row rests on."
+                )
 
     @property
     def provenance(self) -> Provenance:
@@ -155,8 +192,26 @@ class Measurement:
         """``"FX5U-32MT/DS fw 1.065, 2026-09-06"`` — quotable in an exception."""
         return f"{self.cpu} fw {self.firmware}, {self.date}"
 
+    @property
+    def conditions(self) -> str:
+        """``"from 192.168.10.41 over wi-fi, n=300"`` — empty when none were recorded.
+
+        Kept out of :attr:`reference` on purpose: that string is the silicon's
+        identity and is compared and quoted as such. This one is the part of a
+        measurement a reader needs in order to decide whether it transfers.
+        """
+        parts: list[str] = []
+        if self.host:
+            parts.append(f"from {self.host}")
+        if self.medium:
+            parts.append(f"over {self.medium}")
+        if self.samples is not None:
+            parts.append(f"n={self.samples}")
+        return ", ".join(parts)
+
     def __str__(self) -> str:
-        return self.reference
+        conditions = self.conditions
+        return f"{self.reference}, {conditions}" if conditions else self.reference
 
 
 @dataclass(frozen=True, slots=True)

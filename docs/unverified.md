@@ -10,6 +10,12 @@ and the specific behaviour that justifies a safety default has not been reproduc
 that goes from "all manual" to "mostly measured" is exactly where a reader stops checking, so
 each claim in it says which it is.
 
+**This list is billed as complete, so completeness is now checked rather than asserted.** It
+was not complete: until 2026-09-07 it omitted four selectable profiles, three of them iQ-F.
+`tests/unit/test_citations.py::test_every_shipped_profile_is_accounted_for_in_unverified_md`
+fails if a profile key exists that this file does not name, because a page whose whole value is
+"here is what we do not know" is worth nothing if adding a profile can quietly leave it behind.
+
 The label is honest reporting. **It is not protection.** The conformance simulator gives every
 one of these paths CI coverage, but the simulator was written from the same manuals as the
 client, so a misread section passes on both sides of the test. Read this list as "we believe
@@ -22,6 +28,68 @@ aslmp capabilities melsec:iq-f/fx5u --unverified-only
 aslmp capabilities --all
 aslmp ambiguities
 ```
+
+---
+
+## Seven of the eight shipped profiles, one of which you can select by accident
+
+`aslmp.profiles.KEYS` has eight entries. **One** of them has ever been connected to:
+
+| profile key | CPU | evidence |
+| --- | --- | --- |
+| `melsec:iq-f/fx5u` | FX5U-32MT/DS fw 1.065 | **measured**, and only that model on that firmware |
+| `melsec:iq-f/fx5uc` | FX5UC | **never connected** — manual only |
+| `melsec:iq-f/fx5uj` | FX5UJ | **never connected** — manual only |
+| `melsec:iq-f/fx5s` | FX5S | **never connected** — manual only |
+| `melsec:iq-r` | iQ-R R04–R120 | **never connected** — manual only |
+| `melsec:iq-r/r00` | iQ-R R00 / R01 / R02 | **never connected** — manual only |
+| `melsec:q` | MELSEC-Q | **never connected**, and no range table at all |
+| `melsec:l` | MELSEC-L | **never connected**, and no range table at all |
+
+This file used to name only iQ-R, Q and L, which left out the three that a reader is most
+likely to assume are covered: **`fx5uc`, `fx5uj` and `fx5s` are iQ-F**, they share this
+package's iQ-F builders, and every FX5U measurement in `hardware.md` was taken on a different
+piece of silicon from any of them. Same family is not same CPU. Concretely:
+
+- **`melsec:iq-f/fx5uc`** carries the FX5U's device table verbatim, from the same JY997D55401
+  section, plus the monitor and long-specification refusals carried across from the FX5U's
+  measured `0xC059`. Carrying a *refusal* across is the safe direction — it costs a typed error
+  naming `capability_overrides` where a wrong "supported" costs a round trip — but nothing here
+  was observed on an FX5UC.
+- **`melsec:iq-f/fx5uj`** overrides nineteen device ranges with the FX5UJ's smaller ones
+  (`M` to 7679, `F` to 127, `ST` to 15) and **carries the other nine over from the FX5U**:
+  `X`, `Y`, `S`, `SM`, `SD`, `Z`, `LZ`, `R` and `D` ship as `Provenance.INFERRED` because the
+  sources read do not state them separately for an FX5UJ. Those nine are the first thing to
+  point `aslmp verify-ranges` at.
+- **`melsec:iq-f/fx5s`** takes the FX5U's device points as the tables read them, and four of
+  its twelve model-code **names** (`0x4B55`–`0x4B58`) are our reading of a survey extract that
+  cannot be right as printed — ambiguity `A-FX5S-MODEL-CODES`. The codes are the manual's; a
+  wrong name shows up in `CpuIdentity.model` and cannot make `connect()` accept the wrong CPU,
+  because the code is what is compared.
+- **`melsec:iq-r/r00`** is the narrower range table for R00/R01/R02, which have 8192 `X`/`Y`/`M`
+  points where the family profile says 12288. Both profiles claim those three model codes, so
+  `connect()` accepts either declaration and **nothing chooses between them**: pick the wrong
+  one and `M9000` passes validation and comes back `0xC056`. It is reachable by name only, and
+  `aslmp identify` offers it.
+
+**On all seven, every capability is `MANUAL` or `INFERRED` — including the five the FX5U has
+measured**: batch access, random access, self test, read type name and 4E acceptance. Nothing
+below repeats them per profile, because "we have never connected to this CPU" already says it,
+and a per-capability list would suggest the omissions were the interesting part.
+
+**With two exceptions, on the three iQ-F variants.** `fx5uc`, `fx5uj` and `fx5s` each report
+**2 `LIVE` rows** from `provenance_counts()`: the monitor and long-device-specification
+*refusals*, carried across with the FX5U's own measurement attached. Carrying a refusal is the
+safe direction — a wrong "refused" costs a typed error naming `capability_overrides`, a wrong
+"supported" costs a round trip and a `0xC059` — but it is an FX5U measurement wearing another
+profile's label, and until 2026-09-07 all three module docstrings said every row was `MANUAL`,
+which those two rows made untrue. They now say so.
+
+The three iQ-F variants are also the three most likely to be selected by somebody who read the
+bench numbers in `hardware.md` and assumed they transfer. They do not. `aslmp capabilities
+<key>` prints the provenance of every row of whichever one you name, and
+`profile.provenance_counts()` gives the totals — for `melsec:iq-f/fx5u` today that is 19 live,
+67 manual and 3 inferred, which is the honest shape of even the measured profile.
 
 ---
 
@@ -54,8 +122,24 @@ with Communication Data Code = ASCII (X,Y OCT), and a third with ASCII (X,Y HEX)
 
 ## The iQ-R, Q and L profiles
 
-Every device range, radix, limit and capability in `profiles/iq_r.py`, `profiles/q.py` and
-`profiles/l.py` is read out of a manual. We have never connected to one.
+Every radix, limit and capability in `profiles/iq_r.py`, `profiles/q.py` and `profiles/l.py` is
+read out of a manual. We have never connected to one.
+
+**Device ranges are the exception, and this file described them wrongly until 2026-09-07.** It
+said every device range in all three was manual-derived. That is true of iQ-R, whose ranges come
+from SH(NA)-081263ENG's default parameter assignment. It is **not** true of Q and L, which ship
+**no device-range table at all** — `ranges_iqf.tsv` and `ranges_iqr.tsv` are the only two that
+exist. On those two profiles every family the generic device table lists with the short device
+specification is declared *present with no static range*, so `check_range` validates that the
+device exists and does **not** validate the span; the eleven long-specification families and the
+SFC block device are declared absent with the reason. `with_ranges()` is how a user supplies the
+real numbers.
+
+That gap is deliberate and is worth more than a filled-in table would be. Inventing Q ranges
+from the iQ-R figures would have looked exactly like knowledge and would have refused a
+legitimate `D14000` on a Q26UDEHCPU while citing a manual section that says no such thing. But
+"manual-derived ranges" and "no ranges" are different promises to a user, and only one of them
+was on this page.
 
 Notably unverified there:
 
@@ -141,6 +225,23 @@ Never exercised on the bench. The encoder, the `BlockRule` limits (`120` blocks,
 points; iQ-F `1406` total `≤760`) and the word-blocks-before-bit-blocks wire order are all
 manual-derived. `aslmp bench --suite block` and `bench/access_patterns.py` both include a block
 row specifically so that the first person with hardware gets a number.
+
+## `0x1617` Clear Error
+
+Never sent, on any CPU. It is `Provenance.MANUAL` in every profile that offers it, including
+the FX5U's — which makes it the one FX5U capability that is neither measured nor remote-control
+gated, and it was missing from this page until 2026-09-07.
+
+Its **subcommand is an open ambiguity**, `A-1617-SUBCOMMAND`: the FX5 manual's command-list
+table says `0001` and its own detail section says `0000`, on the same document. The library
+sends `0000` — the value every other non-device command in the catalogue uses — and refuses
+anything else client-side. Nothing here can tell which the CPU wants, because the command needs
+a CPU that has a clearable error and the bench CPU has been in RUN with none; the one fault it
+did have, a memory-card error, was cleared by taking the card out and power-cycling, not over
+SLMP.
+
+**Probe:** on a CPU with a clearable error, send `1617` with subcommand `0000`, record the end
+code, then repeat with `0001`.
 
 ## `0x1630` / `0x1631` remote password
 

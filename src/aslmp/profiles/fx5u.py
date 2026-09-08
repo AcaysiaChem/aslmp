@@ -70,10 +70,29 @@ __all__ = [
 BENCH_CPU: Final = "FX5U-32MT/DS"
 BENCH_FIRMWARE: Final = "1.065"
 
+BENCH_FIRST_DAY: Final = "2026-09-06"
+"""The day this package had exactly one host and one link, which is why it can be inferred."""
 
-def _measured(date: str, note: str) -> Measurement:
-    """A measurement on the one CPU this package has ever had in the building."""
-    return Measurement(cpu=BENCH_CPU, firmware=BENCH_FIRMWARE, date=date, note=note)
+LAPTOP: Final = "192.168.10.41 (laptop)"
+WIFI: Final = "wi-fi, ~7 ms median RTT"
+
+
+def _measured(date: str, note: str, host: str = "", medium: str = "") -> Measurement:
+    """A measurement on the one CPU this package has ever had in the building.
+
+    ``host`` and ``medium`` default to the Wi-Fi laptop **only for**
+    :data:`BENCH_FIRST_DAY`, when it was the only host that had ever reached this CPU
+    and the only link that had ever carried a frame to it -- so filling it in is
+    reading the record rather than guessing. From 2026-09-07 there are two hosts on two
+    links, one of which overturned a published conclusion, so a measurement taken that
+    day states them or leaves them empty. Empty means "not written down", which is not
+    the same claim as "no host": see :class:`aslmp.wire.citations.Measurement`.
+    """
+    if not host and not medium and date == BENCH_FIRST_DAY:
+        host, medium = LAPTOP, WIFI
+    return Measurement(
+        cpu=BENCH_CPU, firmware=BENCH_FIRMWARE, date=date, note=note, host=host, medium=medium
+    )
 
 
 XY_LINEAR_INDEX: Final = _measured(

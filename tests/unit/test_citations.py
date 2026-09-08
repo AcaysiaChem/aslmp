@@ -77,10 +77,10 @@ def test_measurement_names_the_silicon_and_is_always_live() -> None:
 
 @pytest.mark.parametrize("field", ["cpu", "firmware", "date"])
 def test_measurement_refuses_a_blank_required_field(field: str) -> None:
-    kwargs = {"cpu": FX5U, "firmware": FX5U_FW, "date": "2026-09-06"}
-    kwargs[field] = ""
+    values = {"cpu": FX5U, "firmware": FX5U_FW, "date": "2026-09-06"}
+    values[field] = ""
     with pytest.raises(ValueError, match=field):
-        Measurement(**kwargs)
+        Measurement(values["cpu"], values["firmware"], values["date"])
 
 
 @pytest.mark.parametrize("date", ["06/09/2026", "20260906", "2026-9-6", "yesterday"])
@@ -92,6 +92,48 @@ def test_measurement_refuses_a_date_that_is_not_iso(date: str) -> None:
 def test_measurement_refuses_a_date_that_is_not_a_real_day() -> None:
     with pytest.raises(ValueError, match="calendar date"):
         Measurement(FX5U, FX5U_FW, "2026-02-30")
+
+
+def test_a_measurement_with_no_conditions_renders_exactly_as_it_always_did() -> None:
+    """The new fields are additive. An existing row's rendering must not move."""
+    measurement = Measurement(FX5U, FX5U_FW, "2026-09-06")
+    assert measurement.conditions == ""
+    assert str(measurement) == measurement.reference
+
+
+def test_a_measurement_carries_the_host_the_medium_and_the_n() -> None:
+    """The three conditions that cost this project a published claim.
+
+    "TCP wins the latency tail" was measured correctly, over Wi-Fi, and generalised to
+    SLMP; a wired retest overturned it (``A-UDP-TAIL-LATENCY``). A timing that does not
+    say where the client stood, what it stood on and how many samples it took cannot be
+    checked by the next person, so the type has somewhere to put all three.
+    """
+    measurement = Measurement(
+        FX5U,
+        FX5U_FW,
+        "2026-09-07",
+        host="192.168.10.36 (argus-bench)",
+        medium="wired, 3.64 ms median RTT",
+        samples=300,
+    )
+    assert measurement.conditions == (
+        "from 192.168.10.36 (argus-bench), over wired, 3.64 ms median RTT, n=300"
+    )
+    assert str(measurement).startswith(measurement.reference)
+    assert "n=300" in str(measurement)
+
+
+@pytest.mark.parametrize("samples", [0, -1])
+def test_measurement_refuses_a_sample_count_below_one(samples: int) -> None:
+    with pytest.raises(ValueError, match="at least 1"):
+        Measurement(FX5U, FX5U_FW, "2026-09-06", samples=samples)
+
+
+@pytest.mark.parametrize("samples", ["300", 300.0, True])
+def test_measurement_refuses_a_sample_count_that_is_not_an_int(samples: object) -> None:
+    with pytest.raises(TypeError, match="samples"):
+        Measurement(FX5U, FX5U_FW, "2026-09-06", samples=samples)  # type: ignore[arg-type]
 
 
 def test_measurement_is_frozen() -> None:
@@ -176,6 +218,28 @@ def test_every_table_carries_the_provenance_tail() -> None:
         )
 
 
+def test_no_table_spends_a_column_name_the_provenance_tail_also_uses() -> None:
+    """A duplicated column name is silently lost, and this has already happened.
+
+    ``read_table`` builds each row with ``dict(zip(header, fields))``, so two columns
+    of the same name leave only the last. When ``host``/``medium``/``samples`` were
+    added, the middle one was first called ``link`` -- which ``limits.tsv`` already
+    spends on the CPU built-in port against an FX5-ENET module, whose budgets differ
+    (960 against 949 points). Every FX5U limit row would have lost its ``cpu``/``enet``
+    key to a Wi-Fi label, and nothing but this test would have said so.
+    """
+    for name, columns in TABLES.items():
+        if name == "manuals":
+            continue
+        own = columns[: -len(PROVENANCE_TAIL)]
+        clash = sorted(set(own) & set(PROVENANCE_TAIL))
+        assert not clash, (
+            f"{name}.tsv declares {clash}, which the provenance tail also declares. "
+            f"read_table would keep only one of the two."
+        )
+        assert len(set(columns)) == len(columns), f"{name}.tsv has a duplicate column"
+
+
 def test_every_row_declares_a_known_provenance() -> None:
     for name, index, row in every_row():
         if name == "manuals":
@@ -209,11 +273,47 @@ def test_unmeasured_rows_do_not_pretend_to_be_measured() -> None:
         if name == "manuals" or row["provenance"] == "live":
             continue
         where = f"{name}.tsv row {index}"
-        for field in ("cpu", "firmware", "measured"):
+        for field in ("cpu", "firmware", "measured", "host", "medium", "samples"):
             assert not row[field], (
                 f"{where}: provenance is {row['provenance']!r} but {field} is set. "
                 f"Either it was measured, in which case say live, or it was not."
             )
+
+
+def test_the_conditions_columns_are_optional_but_never_malformed() -> None:
+    """``host``, ``medium`` and ``samples`` may be empty. They may not be junk.
+
+    Empty means "not written down at the time", which is a different statement from
+    "no host" and is the reason they are not required: back-filling a host onto a row
+    whose notes never named one would be inventing evidence, which is the failure this
+    whole tail exists to prevent.
+    """
+    for name, index, row in every_row():
+        if name == "manuals":
+            continue
+        where = f"{name}.tsv row {index}"
+        if row["samples"]:
+            assert row["samples"].isdigit() and int(row["samples"]) >= 1, (
+                f"{where}: samples is {row['samples']!r}; it is an n, so a positive "
+                f"integer or empty"
+            )
+        for field in ("host", "medium"):
+            assert row[field] == row[field].strip(), f"{where}: {field} is padded"
+
+
+def test_every_latency_bearing_ambiguity_names_its_host_and_medium() -> None:
+    """The rows where the medium could have changed the answer must name it.
+
+    ``A-UDP-TAIL-LATENCY`` is in this list because it is the row that had to be
+    withdrawn: measured correctly on Wi-Fi and published as a property of SLMP. A
+    reader cannot tell whether one of these transfers to their plant without knowing
+    what it was measured over.
+    """
+    rows = {row["key"]: row for row in read_table("ambiguities")}
+    for key in ("A-UDP-TAIL-LATENCY", "A-UDP-PIPELINE-DEPTH", "A-ENTRY-RELEASE-RACE"):
+        row = rows[key]
+        assert row["host"], f"{key}: a timing row with no host"
+        assert row["medium"], f"{key}: a timing row with no medium"
 
 
 def test_every_row_has_a_manual_or_a_measurement() -> None:
@@ -747,3 +847,41 @@ def test_every_profile_key_in_the_tables_is_spelled_the_same_way() -> None:
     shape = re.compile(r"melsec:[a-z0-9-]+(/[a-z0-9]+)?")
     bad = sorted(key for key in keys if not shape.fullmatch(key))
     assert not bad, f"profile keys must look like melsec:iq-f/fx5u; got {bad}"
+
+
+# ======================================================================================
+# docs/unverified.md, which is billed as complete
+# ======================================================================================
+
+
+def test_every_shipped_profile_is_accounted_for_in_unverified_md() -> None:
+    """A page that lists what we have not verified must list all of it.
+
+    It did not. Until 2026-09-07 it named iQ-R, Q and L and omitted four selectable
+    profiles -- ``melsec:iq-f/fx5uc``, ``fx5uj``, ``fx5s`` and ``melsec:iq-r/r00`` --
+    three of them iQ-F, which is precisely where a reader assumes the FX5U bench
+    numbers carry over. They do not: a measurement names one piece of silicon.
+
+    Importing ``aslmp.profiles`` here rather than hard-coding the eight keys is the
+    point of the test. A ninth profile that nobody documents fails this, and a keys
+    list copied into the test would not.
+    """
+    from aslmp.profiles import KEYS
+
+    page = (Path(__file__).resolve().parents[2] / "docs" / "unverified.md").read_text(
+        encoding="utf-8"
+    )
+    missing = sorted(key for key in KEYS if key not in page)
+    assert not missing, (
+        f"docs/unverified.md does not name {missing}. Every shipped profile is either "
+        f"measured on hardware we own -- which is one of them -- or it is on that page."
+    )
+
+
+def test_unverified_md_still_says_which_profile_is_the_measured_one() -> None:
+    """The list is only useful if the one exception is unmistakable."""
+    page = (Path(__file__).resolve().parents[2] / "docs" / "unverified.md").read_text(
+        encoding="utf-8"
+    )
+    assert "melsec:iq-f/fx5u" in page
+    assert FX5U in page, "the page must name the CPU the measured profile rests on"

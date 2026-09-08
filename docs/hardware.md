@@ -1,8 +1,9 @@
 # What one FX5U actually does
 
 Every measurement below is from a **MELSEC iQ-F FX5U-32MT/DS, firmware 1.065**, at
-192.168.10.250, in RUN with no physical I/O wired — ~1029 scans/s idle. Dates are 2026-09-06
-and 2026-09-07.
+192.168.10.250, in RUN with no physical I/O wired — **1018 scans/s idle, 982 µs per scan**
+(section 17, which is also where the 61.6 µs this file used to imply went). Dates are
+2026-09-06 and 2026-09-07.
 
 **Every table names its link.** Two hosts on the same /24:
 
@@ -271,7 +272,19 @@ n  : 1  30  122  158  80  53  33   6   5   4   2   2   1   2   1
 ```
 
 p50 8.46, p90 11.10, p99 16.22, max 22.17, stdev 1.86. Unimodal with a long right tail, and no
-bimodal 40 ms Nagle cluster. The ~0.97 ms scan period is not visible as quantisation.
+bimodal 40 ms Nagle cluster. The **0.98 ms** scan period (section 17) is not visible as
+quantisation. That period was printed as ~0.97 ms here until 2026-09-07, when it was
+re-derived from the corrected scan rate; the conclusion is unchanged, because a millisecond of
+quantisation would be visible in these buckets at either figure.
+
+**This is not the 500-read run quoted in `aslmp.observability`.** That module's docstring
+carries a *different* 500-sample run from the same afternoon and the same link — min 4.568 /
+p50 7.338 / p90 9.710 / p99 12.986 / max 38.477 ms, `TCP_NODELAY` on — and the two are 1.1 ms
+apart at p50 because they are two runs, not two views of one. Neither is a correction of the
+other; both are what this rig did on 2026-09-06 over Wi-Fi, and the gap between them is the
+same point the two-afternoons paragraph below makes in a louder way. Neither run recorded the
+time of day, so "which came first" is not a question this file can answer. If you need one
+number for that link, take the one with a control beside it (section 5.2 has them).
 
 **Nagle is not the jitter.** `TCP_NODELAY` on versus off differed by 0.32 ms at p50 and 0.12 ms
 in stdev, and the *minimum* was lower with Nagle enabled. The library sets `TCP_NODELAY` because
@@ -469,8 +482,10 @@ Measured 2026-09-07 from the **laptop at 192.168.10.41 over Wi-Fi**, TCP entry 5
 `tests/hardware/test_remote_control.py`, on entry 5004. The independent oracle throughout is the
 **free-running scan
 counter in D8**, a REAL written by the PLC's own program: if the CPU is executing it advances at
-~1029/s and if it is not it does not move. SD203 is what the library reads; D8 is what checks
-SD203.
+about 1018/s (section 17) and if it is not it does not move. Nothing here rests on the exact
+rate — what is being asked of D8 is "moving or not" — but it is quoted correctly because a
+figure repeated in five places is how the wrong one survived. SD203 is what the library reads;
+D8 is what checks SD203.
 
 We had refused to send these at all, because this CPU's memory-card error once left it declining
 a remote RUN and needing a physical power cycle. The card is out, and GX Works3 drove remote STOP
@@ -597,7 +612,7 @@ which this table cannot.
 | reconnects | **0** |
 | cadence overruns | **0** |
 | entry-busy / concurrent rejections | 0 / 0 |
-| PLC scan rate under this load | **969/s**, against **1029/s** idle |
+| PLC scan rate under this load | **969/s**, against this session's own idle reference of **1029/s** (see below) |
 
 | ms | p50 | p90 | p99 | p99.9 | max | sd |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -606,9 +621,19 @@ which this table cannot.
 
 **Nothing drifted.** The block read's p50 moved from 3.72 ms over the first fifth of the run to
 3.67 ms over the last — in the wrong direction for a leak, and of the same order as the 0.01 ms
-control drift in section 5. Two transactions per cycle at 50 Hz cost this CPU about **6% of its
-scan rate**, which is the number to quote when somebody asks what polling costs the PLC. One
-CPU, one firmware, one cadence.
+control drift in section 5. Two transactions per cycle at 50 Hz cost this CPU **about 5–6 % of
+its scan rate**, which is the number to quote when somebody asks what polling costs the PLC.
+One CPU, one firmware, one cadence.
+
+**Why that is a range and not 5.8 %.** The cost is a ratio of two scan rates, so it inherits
+the disagreement between them. 969/s is this run's loaded figure and 1029/s is the idle
+reference *this same session* took; against the standing idle figure of 1018/s (section 17) the
+same loaded number is a 4.8 % cost. The two idle references differ by 1.1 %, which is inside
+the spread section 17 records for the measurement across windows and sessions, and it is
+larger than the precision "6 %" implied. The within-session pair is the one to compare —
+969 against 1029, both from this run — and the range is what carrying it out of the session
+costs. The 25 Hz run below cost 2.1 % by the same arithmetic against its own reference, which
+is the shape you would expect from half the cadence.
 
 Read the absolute milliseconds as the weakest rows here. They are one host on one link on one
 afternoon, and section 5 is the standing demonstration of what that is worth. The counters, the
@@ -636,8 +661,9 @@ the point of printing both.
 1,125 cycles in 45.0 s at 25.0 Hz; 2,425 transactions completed of 2,425 started; **0 failed
 cycles, 0 reconnects, 0 entry-busy, 0 concurrent rejections, 0 timeouts**; **53 cadence
 overruns**, all of them cycles whose tail did not fit a 40 ms period on a radio; PLC at 997
-scans/s under this load against 1018 idle. Control drift 7.56 → 7.74 ms at p50 (0.18 ms) — an
-error bar eighteen times the wired run's, which is what a radio costs you. The soak's own drift
+scans/s under this load against 1018 idle — the same idle figure as section 17, taken in this
+run, and a 2.1 % cost at half the cadence of the wired run above. Control drift 7.56 → 7.74 ms
+at p50 (0.18 ms) — an error bar eighteen times the wired run's, which is what a radio costs you. The soak's own drift
 was +0.86 ms across the run, larger than the control's and not distinguishable from it at this
 length.
 
@@ -698,6 +724,71 @@ cadence at once, and it fails loudly if any one of them is wrong.
 What it does **not** prove: the bath is our model, not the PLC's, so this validates the data
 path and the controller's arithmetic, not any physical process. `D2` was restored to the value
 it was found with (0.0) and read back to confirm.
+
+## 17. The scan rate, and the 61.6 µs that was a bit pattern
+
+This section exists because a number derived from a wrong declared type outlived the code that
+produced it by a day, in a table, in the README, where it looked like a specification.
+
+### The measurement
+
+`D8` is `IO_Scan`, a **`REAL`** — the PLC's own ST does `IO_Scan := IO_Scan + 1.0` once per
+scan and wraps above `1.0E7`. Read as the `f32` it is:
+
+| window | counts | seconds | scans/s |
+| --- | --- | --- | --- |
+| 20 s | **20,374** | 20.014 | **1018.0** |
+| 1 s, 5 s, 10 s | — | — | 1018, agreeing to 0.4 % |
+
+FX5U-32MT/DS fw 1.065 at 192.168.10.250, in RUN with no physical I/O wired, 2026-09-07, from
+the laptop at 192.168.10.41 over Wi-Fi. **1018 scans/s, 982.3 µs per scan**, and that is the
+one figure this repository publishes for it.
+
+A scan rate is nearly the only number in this file a link cannot move: it is a counter delta
+over a wall-clock window of seconds, so a few milliseconds of RTT at each end of a 20 s window
+is 0.03 %. That is why the host and medium are recorded here for completeness rather than as a
+caveat — and why the figure that was wrong could not have been blamed on the medium.
+
+### What 61.6 µs was
+
+`README.md` printed "61.6 µs per count" for `D8`. That is not a scan period. It is `D8` read as
+`U32` — the misread this repository documents at length elsewhere — turned into a rate:
+
+- at the ~613,775 the counter stood at, an `f32`'s ulp is 2⁻⁴, so one `+1.0` in the REAL moves
+  the **bit pattern** by 16;
+- 16 × 1018 = 16,288 bit-pattern steps per second = **61.4 µs per step**, which is 61.6 µs to
+  the precision of whichever window it came from;
+- 982.3 / 61.6 = **15.9**, which is the ulp step of 16 to the precision of the old figure —
+  and that is what makes this the misread's residue rather than a coincidence or a bad clock.
+
+The misread itself was found and fixed in the code and in the example. This figure was not
+traced at the time. **Tracing is the lesson**: a wrong declared type does not only produce a
+wrong reading, it produces every number anybody later computes from that reading, and those
+land in prose where no type checker, no end code and no test can reach them.
+
+### Everything re-derived from it, and everything that was left alone
+
+| where | was | now | why |
+| --- | --- | --- | --- |
+| `README.md`, the D8 register-map row | 61.6 µs per count | 982 µs per count, 1018 scans/s | the bit-pattern residue, replaced by the measurement |
+| this file, header | ~1029 scans/s idle | 1018 scans/s idle, 982 µs per scan | one published figure, with its conditions |
+| this file, §5.5 | ~0.97 ms scan period | 0.98 ms | 1/1018; the conclusion it supports is unchanged |
+| this file, §15 | ~1029/s | ~1018/s | D8 is used there as moving-or-not; the rate is only quoted |
+| this file, §16 and README, the soak | 969/s against 1029/s idle, "about 6 %" | unchanged pair, "about 5–6 %" | 1029/s is that session's own reference and stays with its run; the percentage now carries the disagreement between the two idle figures |
+| `bench/soak.py`, `tests/hardware/*`, `aslmp.testing` | ~1024 and ~1029 in prose | not touched by this sweep | they are outside the sweep's ownership; each is a docstring quoting an idle rate, and each should be reconciled to 1018 when its file is next opened |
+
+### Why the figures ever disagreed
+
+The repository has carried ~1024, ~1029 and 1018 for the same quantity. They are 1.1 % apart at
+the extremes, which is far too small to be the `U32` misread (that one is 16x) and is
+consistent with short windows, different sessions and a CPU whose scan rate is not a constant
+of nature. The 20 s window above is the longest we have taken and it agrees with the 1 s, 5 s
+and 10 s windows of the same session to 0.4 %.
+
+What would settle it properly, and has not been done: sample `D8` as `f32` over a 60 s window on
+each of two sessions on two days, from both hosts, and record all four. Until then **1018 with
+the conditions above** is the figure, and a percentage derived from a *pair* of scan rates
+should quote the pair it came from rather than mixing sessions.
 
 ## Reproducing any of this
 

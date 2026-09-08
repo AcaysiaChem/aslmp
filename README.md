@@ -33,10 +33,15 @@ The default did not change; its justification did — a UDP entry on iQ-F is poi
 it exists only for hosts somebody configured it for. See [`docs/hardware.md`](docs/hardware.md)
 section 5 for both tables side by side.
 
-**We have no iQ-R, no Q, no L, and no ASCII connection.** Those paths are implemented, they
-are gated, and every one of them ships **labelled unverified**: in the profile as
-`Evidence(provenance=MANUAL)`, in the docstring, in `aslmp capabilities`, and in
-[`docs/unverified.md`](docs/unverified.md). The label is honest. It is not protection.
+**Seven of the eight shipped profiles have never been connected to.** Not just the ones you
+would expect: `melsec:iq-r`, `melsec:iq-r/r00`, `melsec:q` and `melsec:l`, but also
+`melsec:iq-f/fx5uc`, `melsec:iq-f/fx5uj` and `melsec:iq-f/fx5s` — three **iQ-F** profiles that
+a reader may reasonably assume the bench measurements carry over to, and they do not: a
+measurement names one piece of silicon. `melsec:iq-f/fx5u` is the whole of our evidence. There
+is no ASCII connection either. All of those paths are implemented, gated, and ship **labelled
+unverified**: in the profile as `Evidence(provenance=MANUAL)`, in the docstring, in `aslmp
+capabilities`, and in [`docs/unverified.md`](docs/unverified.md), which lists every one of the
+seven. The label is honest. It is not protection.
 
 **Remote control is partly verified.** RUN, STOP and PAUSE have been driven against the real
 CPU and checked against its own free-running scan counter, not just against `SD203`. **Remote
@@ -62,9 +67,18 @@ socket code yourself; this README will tell you how.
 
 ## Install
 
+**There is no `aslmp` on PyPI yet**, and `pip install aslmp` will not get you this package —
+it is pre-1.0 and nothing has been released. Until the first release, install from a checkout:
+
 ```
-pip install aslmp
+git clone <this repository> && cd aslmp
+pip install .            # or: pip install -e .[dev]  for the test suite
 ```
+
+`pip install git+<url>` works too. The first release will make the one-line form true; this
+section says what is true now rather than what is intended, because the install command is the
+first thing a cold reader runs and a package that does not exist is a poor introduction to a
+library whose argument is that it does not tell you things that are not so.
 
 Python 3.11+. No runtime dependencies — deliberately, and load-bearing: the wheel has to
 install on a Jetson's aarch64 and on a locked-down plant PC with no compiler and no proxy to
@@ -171,12 +185,32 @@ on the wire.
 | `D2` | process value |
 | `D4` | manipulated variable |
 | `D6` | error |
-| `D8` | free-running counter (61.6 µs per count) |
+| `D8` | free-running scan counter — a `REAL` the PLC program advances by `1.0` every scan, so **982 µs per count** |
 | `D100`–`D119`, `M100`–`M119` | scratch |
 
 A free-running counter read *inside the same transaction as your data* gives every transaction
 an independent PLC-side timestamp, which separates host scheduling jitter from PLC jitter.
 `Plc(plc_clock=...)` is shaped for exactly that.
+
+**That row said "61.6 µs per count" until 2026-09-07, and the number was not a scan period.**
+It was `D8` read as a `U32` — the same misread the block example below is written about — put
+through arithmetic. Read as the `f32` it is: **20,374 counts in 20.014 s = 1018.0 scans/s,
+982.3 µs per scan**, FX5U-32MT/DS fw 1.065 at 192.168.10.250, 2026-09-07, from the laptop at
+192.168.10.41 over Wi-Fi, agreeing with 1 s, 5 s and 10 s windows to 0.4 %. A scan rate is one
+of the few numbers here a link cannot move much — it is a count divided by a wall-clock window
+of seconds, so a few ms of RTT at each end is 0.03 % of a 20 s window — which is exactly why
+the old figure could not be blamed on the medium.
+
+The old number was **15.9x too small**, and the factor is not a coincidence. At the ~613,775
+the counter stood at, one `+1.0` in the REAL moves the IEEE-754 bit pattern by 16, so a `U32`
+reader counts sixteen times too fast and reports a period sixteen times too short. This is what
+a wrong declared type looks like *after* it has been through arithmetic: not a broken number, a
+plausible one in the right units, in a table. The bit-pattern reading was found and fixed in
+the code a day earlier; this figure is what it left behind, and finding it here is why the pass
+that corrected it went looking for *every* number derived from a `D8` rate instead of only the
+one that had been reported. `docs/hardware.md` section 17 carries the measurement, the
+arithmetic, and the list of everything re-derived from it — including what was deliberately
+left alone, and where.
 
 ### 7. Check it before you write any code
 
@@ -335,8 +369,14 @@ record (SP, PV, MV, Err, scan) as one snapshot, a first-order bath model is inte
 2026-09-07, from `argus-bench` over the wired link, TCP 5002: **15,000 cycles, 30,005
 transactions, 300.0 s at exactly 50.0 Hz, 0 errors, 0 reconnects, 0 cadence overruns**, block
 read p50 3.67 / p99 4.69 ms with p50 moving 3.72 → 3.67 ms between the first fifth of the run
-and the last. The CPU scanned at **969/s under that load against 1029/s idle** — two
-transactions per cycle at 50 Hz cost it about 6% of its scan rate.
+and the last. The CPU scanned at **969/s under that load against its own idle reference of
+1029/s in the same session** — two transactions per cycle at 50 Hz cost it **about 5–6 % of its
+scan rate**. The range is not hedging: 1029/s is that session's reference and the repository's
+standing idle figure is 1018/s (§17 of `docs/hardware.md`), the two disagree by 1.1 %, and the
+percentage is a ratio of two scan rates so it inherits both. **That table came from the
+throwaway harness `bench/soak.py` was promoted from**, not from the shipped script, which is
+why it carries no control rows; `docs/hardware.md` section 16 prints a shorter run of the
+shipped script beside it, with the controls it now takes.
 
 The number that matters is not in that paragraph. Because the band is 12 %/K, the CPU's own
 values must satisfy
@@ -493,8 +533,23 @@ revalidate the frame per cycle, which is the whole cost `bind` is there to pay o
 large for one transaction needs `bind(..., allow_split=True)` and then returns a `Split[B]`,
 which is deliberately *not* a `B`, because its fields were not one snapshot.
 
-Measured on the bench, 2026-09-07: **7.75 ms for the bound block read against 38.24 ms** for the
-same five values as five separate batch reads — 4.9x, and one sample instead of five.
+Measured on the bench, 2026-09-07 from the Wi-Fi laptop, n=9 of each: **7.75 ms of wire time
+for the bound block read against 38.24 ms of wall time** for the same five values as five
+separate batch reads.
+
+**Those two columns are not the same measurement, and the ratio between them is not 4.9x
+worth of anything.** 7.75 ms is the block's `wire_ms`; 38.24 ms is a wall clock around five
+reads, so it includes this client's own scheduling between them and the block's does not. The
+like-for-like figure is the *sum of the five reads' wire times*, which the same test records as
+`five_reads_wire_sum_p50_ms` and prints under `-s` — and which was not written down, so it is
+not published here. What can be said without it: single `read_f32` wire p50 on that link and
+day was 7.46 ms, so five of them are ~37.3 ms of wire, and the honest multiplier is **about
+4.8x with a host gap of roughly 0.2 ms per read on top** — an arithmetic inference from two
+published numbers, labelled as one. The next run of that test writes the recorded wire sum
+down, and then this paragraph is a number instead of an argument.
+
+The multiplier was never the point. Five reads are five moments; one `0x0403` is one snapshot,
+and no latency column shows that.
 
 ---
 
@@ -542,7 +597,11 @@ expensive way, by publishing a transport conclusion that was a property of its W
 table in this repository now names its host, its link and its median RTT, and a number without
 them is treated as unreproducible.
 
-`bench/` has published exactly one table so far: the five-minute closed-loop soak above. The
+`bench/` has published exactly one table so far: the five-minute closed-loop soak above — and
+strictly speaking `bench/soak.py` did not produce it, the throwaway harness it was promoted
+from did, before the bracketing controls and the `--rate`/`--duration` arguments existed. A
+rerun of the shipped script prints more rows and a different transaction total.
+[`docs/hardware.md`](docs/hardware.md) section 16 prints one such rerun beside it. The
 transport and access-pattern scripts are exercised against the simulator and have not been run
 against the FX5U; when somebody runs them, the numbers go in with the control rows and the link
 attached, or they do not go in at all. **`bench/soak.py` is the only script in this repository
@@ -628,7 +687,10 @@ exist only because somebody else found the bug first, and say so in their docstr
 
 - **fa-yoshinobu / plc-comm-slmp** — the closest thing to a reference implementation in Python,
   with per-model setup guides that predate ours. Its measured overhead over a raw socket is
-  +0.24 ms at p50, which we do not beat.
+  +0.24 ms at p50, and **we have no measurement fine enough to compare with it**: our own
+  library-against-control run was n=120 on a Wi-Fi link with sd ~1.03 ms, where the error bar
+  on a difference of medians is around 0.17 ms. We published +0.07 ms from it once and have
+  withdrawn that; what the run supports is "indistinguishable at this n".
 - **Apache PLC4X** — `ParserSerializerTestsuite.xml` seeded our golden byte-vector corpus.
   Apache-2.0, a straight licence match, attributed in `NOTICE`.
 - **pymcprotocol**, **pymelsec**, **PySLMPClient**, **slmp-rs**, **libslmp2**, **Esmool**,
@@ -639,11 +701,16 @@ exist only because somebody else found the bug first, and say so in their docstr
 ## Development
 
 ```
-python -m pytest                       # 4027 tests, no hardware needed
+python -m pytest                       # no hardware needed; it prints its own count
 python -m ruff check src tests tools bench
 python -m mypy
 aslmp serve                            # a PLC-shaped socket to point things at
 ```
+
+The suite is a few thousand tests and none of them need a PLC. **The count is not written down
+here on purpose**: it moved by tens between the last two edits of this file and a number in
+prose goes stale the moment somebody adds a test, which is a small dishonesty of exactly the
+kind this README is otherwise careful about. `python -m pytest -q` ends with the real one.
 
 Hardware tests live in `tests/hardware/`, are marked `hardware`, are gated on `ASLMP_TEST_HOST`
 and never run in CI:
@@ -652,8 +719,9 @@ and never run in CI:
 ASLMP_TEST_HOST=192.168.10.250 python -m pytest tests/hardware -s
 ```
 
-`tests/hardware/test_fx5u.py` is 25 tests against a real FX5U-32MT/DS -- 24 that run from
-any host plus one that runs only from the wired UDP entry's configured peer -- covering the
+`tests/hardware/test_fx5u.py` collects 25 tests against a real FX5U-32MT/DS -- 24 test
+functions, one of which is parametrized twice, and one of the 25 runs only from the wired UDP
+entry's configured peer -- covering the
 handshake, the
 low-word-first float decode against the running controller, a bound block read measured against
 five separate batch reads, scratch writes including a register above `0x7FFF`, bit access,

@@ -1,6 +1,10 @@
 """MELSEC iQ-F FX5UJ. The same family with a materially smaller device table.
 
-Layer 1. **Unverified**: every row is ``Provenance.MANUAL``.
+Layer 1. **Unverified**: no FX5UJ has ever been connected to. Every row is
+``Provenance.MANUAL`` or ``INFERRED`` except the two carried-across refusals -- monitor and
+the long device specification -- which ship ``LIVE`` with the FX5U's measurement attached;
+see :mod:`aslmp.profiles.fx5uc` for why a refusal is the safe direction to carry and why
+it is still worth saying out loud.
 
 Nineteen of the twenty-eight present device ranges are smaller than the FX5U's, and
 they are the reason per-model profiles exist at all rather than one ``iq-f`` profile

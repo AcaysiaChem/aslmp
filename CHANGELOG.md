@@ -113,7 +113,10 @@ simulator, no bench") and section 1.15 puts the simulator behind an `aslmp[testi
 Implemented literally, that gate achieves nothing:
 
 1. The `testing` extra declares **no dependencies**, so `pip install aslmp[testing]` and
-   `pip install aslmp` resolve to the same bytes. A Python extra selects *dependencies*; it
+   `pip install aslmp` resolve to the same bytes. (Neither resolves to anything at all today:
+   there is no `aslmp` on PyPI and the README says to install from a checkout. The argument is
+   about what a Python extra can select, and it holds whenever the first release happens.)
+   A Python extra selects *dependencies*; it
    cannot select *modules* of its own package. Excluding `aslmp/testing` from the wheel would
    make `pip install aslmp[testing]` install a package **without** the simulator — an extra that
    cannot deliver what it promises.
@@ -132,8 +135,17 @@ stays out: it lives at the repository root and its scripts need a PLC.
 ### Integration pass — found by assembling the units, and by the bench (2026-09-07)
 
 Five changes that no single build unit could see, plus the first end-to-end run against real
-iron. `tests/hardware/test_fx5u.py` is 23 tests, marked `hardware`, gated on `ASLMP_TEST_HOST`,
-and all 23 pass against FX5U-32MT/DS fw 1.065 at 192.168.10.250.
+iron. `tests/hardware/test_fx5u.py` had **23 test functions** at that run, marked `hardware`,
+gated on `ASLMP_TEST_HOST`, and they all passed against FX5U-32MT/DS fw 1.065 at
+192.168.10.250. It has **24 functions and collects 25 tests today**: one function was added
+afterwards (the peer-bound wired UDP entry) and one has been parametrized twice all along, so
+even that day pytest reported 24 where this entry said 23.
+
+That is the whole of the "23 against 25" disagreement with the README, and it is written out
+rather than quietly corrected because the cause is general: **functions and collected tests are
+two different counts**, and a number typed into prose is a third thing that was true once.
+Counts belong in output, not in documents; `python -m pytest -q` prints the real one, which is
+why the README no longer states a suite total at all.
 
 - **`Counters.segmented_responses` fired on 100% of TCP transactions.** It counted "more than one
   chunk", but a stream response is read as the fixed prefix and *then* exactly `L` more units, so
@@ -174,9 +186,9 @@ and all 23 pass against FX5U-32MT/DS fw 1.065 at 192.168.10.250.
 | --- | --- |
 | handshake (`0x0619` + `0x0101`), TCP 5002 | 8.1 ms; `FX5U-32MT/DS`, model code `0x4A49` |
 | `read_f32` p50 / p99, n=120, TCP | 7.46 / 10.81 ms |
-| raw-socket control, same session, n=120 | 7.39 / 10.79 ms — the library's overhead is **0.07 ms at p50** |
-| one bound block read (5 values, one `0x0403`) | 7.75 ms |
-| the same five values as five `0x0401`s | 38.24 ms wall — **4.9x** |
+| raw-socket control, same session, n=120 | 7.39 / 10.79 ms — **indistinguishable from the library at this n** (see below) |
+| one bound block read (5 values, one `0x0403`), n=9 | 7.75 ms **of wire time** |
+| the same five values as five `0x0401`s, n=9 | 38.24 ms **of wall time** — not the same clock, see below |
 | 16 serial reads, TCP | 128 ms, 125 txn/s |
 | 16 pipelined 4E reads, UDP depth 16 | 48 ms, 331 txn/s — **2.6x**, 0 lost |
 | 4E/UDP burst at depth 8 | 8/8 answered, 25.8 ms, 311 txn/s, every serial matched |
@@ -184,6 +196,31 @@ and all 23 pass against FX5U-32MT/DS fw 1.065 at 192.168.10.250.
 | `D8000` with `validate_ranges=False` | `0xC056` → `SlmpDeviceRangeError` |
 | 961 words via `raw_command` | `0xC052` → `SlmpWordPointCountError` |
 | two `0x0401`s written in one `send` | **13 bytes back — ONE response, end code `0x0000`** |
+
+**Two numbers in that table were withdrawn on 2026-09-07 for claiming more than the run
+supports**, and the rows above are the restated versions:
+
+- **"the library's overhead is 0.07 ms at p50" is gone.** It was finer than its own noise
+  floor. At n=120 with sd ~1.03 ms, the standard error on a *median* is about
+  1.253 × 1.03 / √120 ≈ 0.12 ms, and on a difference of two medians about 0.17 ms — more than
+  twice the quantity claimed. The run also took its raw-socket control **once, before** the
+  library's samples, where `docs/benchmarking.md`'s own rule is a control before *and* after so
+  that the drift between them is the error bar. What the run supports is: **7.46 against 7.39 ms
+  at p50, indistinguishable at this n, and the library is not faster than a raw socket** — which
+  is the assertion the test actually makes, and the one worth having. `prior art` still records
+  `plc-comm-slmp`'s +0.24 ms, which we do not claim to beat.
+- **"4.9x for block reads" is gone.** It divided the block's *wire* time by five reads' *wall*
+  time: the numerator excludes this client's scheduling and the denominator includes four
+  helpings of it. The like-for-like figure — the sum of the five reads' own wire stamps — is
+  recorded by the same test as `five_reads_wire_sum_p50_ms` and printed under `-s`, and was not
+  written down, so it is not published. From two figures that were: single `read_f32` wire p50
+  was 7.46 ms on that link and day, so five are ~37.3 ms of wire and the like-for-like
+  multiplier is **about 4.8x** — an inference from published numbers, labelled as one. The
+  argument for blocks was never the multiplier: five reads are five moments and one `0x0403` is
+  one moment.
+
+`docs/benchmarking.md` now carries both as rules — **no ratio between two different clocks**,
+and one control is not a bracket.
 
 The coalescing corruption was re-measured on this run and is unchanged: the whole one-in-flight
 architecture is still load-bearing. Floats are low word first, proved against the running
@@ -256,7 +293,11 @@ names its host and its link as well as the CPU, the firmware and the date.
 - **A five-minute closed-loop soak, `bench/soak.py`.** 15,000 cycles, 30,005 transactions, 300.0 s
   at exactly 50.0 Hz, wired, TCP 5002: **0 errors, 0 reconnects, 0 entry-busy, 0 cadence
   overruns**, block read p50 3.67 / p99 4.69 ms with the p50 moving 3.72 → 3.67 ms across the run,
-  and the CPU scanning at 969/s under load against 1029/s idle. The claim worth having is not the
+  and the CPU scanning at 969/s under load against that session's own idle reference of 1029/s —
+  a cost of about 5–6 % of scan rate, the range being the 1.1 % disagreement between that
+  reference and the repository's standing idle figure of 1018/s (`hardware.md` section 17).
+  That table came from the throwaway harness `bench/soak.py` was promoted from, which is why it
+  has no control rows. The claim worth having is not the
   latency: the bench PLC's controller has a proportional band of 12 %/K, so `MV == clamp(Err * 12,
   0, 100)` must hold within every `0x0403` snapshot, and the soak asserts it **every cycle**.
   Read back in full `f32` precision, `Err` 0.4399986267089844 → `MV` 5.2799835205078125 and `Err`
@@ -264,6 +305,54 @@ names its host and its link as well as the CPU, the firmware and the date.
   exactly 0.0 everywhere. A client that decoded garbage could still draw a smooth latency
   curve; it could not close the PLC's own gain arithmetic to the last bit of an `f32`. This is the
   first table `bench/` has published, and it is the only script here that writes to a PLC.
+
+### The honesty sweep, 2026-09-07 — tracing a wrong number instead of patching where it showed
+
+An adversarial review's headline was that the `U32`-against-a-`REAL` misread had been fixed
+where it was found and **not traced**. It was right. This pass follows the arithmetic instead.
+
+- **`README.md`'s "`D8` — 61.6 µs per count" was the misread's residue, and is replaced.**
+  Measured properly, `D8` read as the `f32` it is: **20,374 counts in 20.014 s = 1018.0 scans/s,
+  982.3 µs per scan**, FX5U-32MT/DS fw 1.065, 2026-09-07, from the laptop at 192.168.10.41 over
+  Wi-Fi, agreeing with 1 s, 5 s and 10 s windows to 0.4 %. The old figure was **15.9x** too
+  small, which is not a coincidence: at the ~613,775 the counter stood at, one `+1.0` in the
+  REAL moves the bit pattern by 16, so a `U32` reader counts sixteen times too fast. A wrong
+  declared type does not stop at a wrong reading — it produces every number computed from that
+  reading, and those land in prose, where no test can reach them.
+- **Every figure derived from a `D8` rate or a scan period was re-derived**, and the table of
+  what moved and what deliberately did not is `docs/hardware.md` **section 17**, which is new.
+  The repository now publishes **one** idle scan rate with its conditions (1018/s), the
+  `~0.97 ms` scan period becomes 0.98 ms, and the soak's "about 6 % of scan rate" becomes
+  "about 5–6 %" because it is a ratio of two scan rates and inherits the 1.1 % disagreement
+  between the two idle references. Prose in `bench/`, `tests/hardware/` and `aslmp.testing`
+  still quotes ~1024 and ~1029; those files were outside this pass and are named in section 17
+  rather than left for somebody to find.
+- **Two retracted claims were still shipping in runtime text.** `aslmp --help` told five of
+  eleven subcommands that "TCP wins the latency tail" — the claim withdrawn on 2026-09-07 and
+  corrected in `client.TRANSPORT_CHOICE` — and `aslmp.testing.pathology.ONE_CONNECTION`, a
+  `Measurement`, asserted that "the slot frees immediately on close", which the ~2 ms
+  entry-release race disproves. Both are corrected, as is the same sentence in the shipped
+  ambiguity row `A-ONE-TCP-CONNECTION`, which now carries the withdrawal and points at
+  `A-ENTRY-RELEASE-RACE`.
+- **`Measurement` and the TSV provenance tail gained `host`, `medium` and `samples`.** The
+  three conditions whose absence cost this project a published claim now have somewhere to
+  live, optional so that every existing row stays valid, and filled in wherever the source
+  actually records them — every live row of 2026-09-06 (one host, one link existed that day)
+  and the wired 2026-09-07 timing rows. Empty means "not written down", which is deliberately
+  not the same statement as "no host". The column is `medium` rather than `link` because
+  `limits.tsv` already spends `link` on the CPU port against an FX5-ENET module, whose budgets
+  differ (960 against 949 points): the first draft used `link`, `read_table`'s `dict(zip(...))`
+  silently kept only one of the two, and every FX5U limit row lost its `cpu`/`enet` key. A test
+  now refuses any tail column that collides with a table's own.
+- **`docs/unverified.md` was billed as complete and was not.** It omitted four selectable
+  profiles — `melsec:iq-f/fx5uc`, `fx5uj`, `fx5s` and `melsec:iq-r/r00` — three of them iQ-F,
+  where a reader will assume the FX5U bench numbers carry over. It also said Q and L ship
+  manual-derived device ranges; they ship **no range table at all**, and check presence without
+  checking spans. Both corrected, and completeness is now a test over `aslmp.profiles.KEYS`
+  rather than a claim.
+- **`pip install aslmp` does not work**, because there is no `aslmp` on PyPI. The README now
+  says to install from a checkout until the first release, and the suite's test count has been
+  taken out of the README rather than left to go stale.
 
 ### Known limitations shipped knowingly
 
