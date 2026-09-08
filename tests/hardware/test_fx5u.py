@@ -7,10 +7,18 @@ Gated on ``ASLMP_TEST_HOST``; marked ``hardware``; never run in CI::
 
     ASLMP_TEST_HOST=192.168.10.250 .venv/Scripts/python.exe -m pytest tests/hardware
 
-**The bench.** FX5U-32MT/DS firmware 1.065 at 192.168.10.250, in RUN at ~1024 scans/s,
-no physical I/O wired. Five configured SLMP connection entries: TCP 5000 (in use by other
-tooling -- not touched here), TCP 5002/5003/5004, and UDP 5001, which is point-to-point
-and bound to 192.168.10.41.
+**The bench.** FX5U-32MT/DS firmware 1.065 at 192.168.10.250, in RUN with no physical I/O
+wired, idling at **1018 scans/s** -- D8 read as ``f32`` over 1 s, 5 s and 10 s windows,
+2026-09-07, from the laptop at 192.168.10.41 over Wi-Fi, all three agreeing to 0.4 %.
+Earlier notes say ~1024 and ~1029; the spread is the CPU's, the window's and (at large
+counter values, where an ``f32``'s ulp reaches 128) the register's own resolution.
+
+Six configured SLMP connection entries: TCP 5000 (in use by other
+tooling -- not touched here), TCP 5002/5003/5004, and two UDP entries, both of which are
+**point-to-point**: UDP 5001 bound to the laptop at 192.168.10.41 over Wi-Fi, and UDP 5005
+bound to argus-bench at 192.168.10.36 over the wired link. A UDP entry answers its own
+peer and nobody else, so the test that uses 5005 skips unless this host *is* that peer --
+see :func:`test_the_wired_udp_entry_answers_only_its_configured_peer`.
 
 **The register map**, all f32 low word first: ``D0`` IO_SP, ``D2`` IO_PV, ``D4`` IO_MV,
 ``D6`` IO_Err, ``D8`` IO_Scan (a free-running scan counter). Scratch: ``D100``-``D119``
@@ -22,6 +30,11 @@ and ``M100``-``M119``, stability-checked before use and restored after.
 this module's own AST, because a comment enforces nothing. It never writes outside the
 scratch range, and the last test re-reads the setpoint and the scan counter to prove the
 CPU was left running and unchanged.
+
+Remote RUN, STOP and PAUSE **are** exercised on this bench, in
+``tests/hardware/test_remote_control.py``, which is a separate module for precisely that
+reason: the ban here stays absolute and mechanically checked. ``0x1005`` and ``0x1006``
+are never sent by either file.
 """
 
 from __future__ import annotations
@@ -66,6 +79,9 @@ TCP_PORT = int(os.environ.get("ASLMP_TEST_TCP_PORT", "5002"))
 TCP_PORT_ALT = int(os.environ.get("ASLMP_TEST_TCP_PORT_ALT", "5003"))
 TCP_PORT_RAW = int(os.environ.get("ASLMP_TEST_TCP_PORT_RAW", "5004"))
 UDP_PORT = int(os.environ.get("ASLMP_TEST_UDP_PORT", "5001"))
+UDP_PORT_WIRED = int(os.environ.get("ASLMP_TEST_UDP_PORT_WIRED", "5005"))
+UDP_WIRED_PEER = os.environ.get("ASLMP_TEST_UDP_WIRED_PEER", "192.168.10.36")
+"""The one host UDP entry 5005 will answer. Set both to point the test at your own entry."""
 PROFILE = os.environ.get("ASLMP_TEST_PROFILE", "melsec:iq-f/fx5u")
 
 pytestmark = [
@@ -215,13 +231,25 @@ async def test_the_floats_decode_low_word_first_against_the_running_controller()
 
 
 async def test_the_scan_counter_advances_between_two_reads() -> None:
-    """D8 is free-running at ~1024 scans/s, so it is the bench's own liveness proof."""
+    """D8 is free-running, so it is the bench's own liveness proof.
+
+    Read here as ``u32`` **on purpose**: what is asserted is monotonicity, and the bit
+    pattern of a positive float rises with the float. The delta printed below is
+    therefore in bit-pattern units and is **not** a scan count -- do not quote it as a
+    scan rate. For that, read D8 as the ``f32`` it is, over a window of seconds:
+    1018 scans/s over 1 s, 5 s and 10 s windows on 2026-09-07 from the Wi-Fi laptop.
+    """
     async with bench() as plc:
         first = await plc.read_u32(SCAN)
         await asyncio.sleep(0.25)
         second = await plc.read_u32(SCAN)
         assert second > first, "the CPU is not scanning; every other result here is stale"
-        measured("scan counter", first=first, second=second, delta=second - first)
+        measured(
+            "scan counter, as a u32 BIT PATTERN (not a scan count)",
+            first=first,
+            second=second,
+            delta=second - first,
+        )
 
 
 # ========================================================================================
@@ -670,6 +698,84 @@ async def test_pipelined_udp_beats_serial_tcp_on_throughput() -> None:
         udp_rate_txn_s=round(reads / (udp_ms / 1000)),
         gain=round(tcp_ms / udp_ms, 2),
     )
+
+
+def source_address_toward(host: str) -> str:
+    """Which local address this host would send from, without sending anything.
+
+    ``connect()`` on a UDP socket only records a destination and asks the routing table
+    which interface would carry it; no datagram leaves. That makes this a free, exact
+    answer to "am I the host that entry is bound to" -- as opposed to the hostname, which
+    says nothing about which of several interfaces the PLC is reached through.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect((host, 1))
+        local: str = probe.getsockname()[0]
+    finally:
+        probe.close()
+    return local
+
+
+async def test_the_wired_udp_entry_answers_only_its_configured_peer() -> None:
+    """UDP entry 5005, which exists only for argus-bench on the wired link.
+
+    **This skips rather than fails when run from anywhere else, and that is the point of
+    the test.** A UDP SLMP connection entry on iQ-F is point-to-point: GX Works3 refuses
+    to save one without a destination IP address, so entry 5005 answers 192.168.10.36 and
+    silently discards everything from any other source. There is no end code, no ICMP and
+    no error of any kind -- from the wrong host the only symptom is a client timeout,
+    which would look exactly like a dead PLC or an unplugged cable. Turning that into a
+    three-second red test on every other machine would be reporting a configuration fact
+    as a fault, so the peer check happens first and costs nothing.
+
+    That property is also the whole reason TCP remains the library's default. On a wired
+    link UDP is faster at every percentile (p50 2.42 against 3.63 ms, p90 3.40 against
+    4.05, p99 3.56 against 4.69, n=300 each, control drift 0.01 ms, measured
+    FX5U-32MT/DS fw 1.065 on 2026-09-07 from argus-bench), and none of that helps if
+    nobody configured an entry for your host out of a maximum of eight.
+
+    When it does run, it is an ordinary transaction test: the same CPU must answer on the
+    wired entry, and the transaction record must say which transport carried it.
+    """
+    assert HOST is not None
+    local = source_address_toward(HOST)
+    if local != UDP_WIRED_PEER:
+        pytest.skip(
+            f"UDP entry {UDP_PORT_WIRED} is peer-bound to {UDP_WIRED_PEER} and this host "
+            f"reaches {HOST} from {local}, so every datagram would be discarded without a "
+            f"reply and the only symptom would be a timeout. Run this from "
+            f"{UDP_WIRED_PEER}, or set ASLMP_TEST_UDP_WIRED_PEER and "
+            f"ASLMP_TEST_UDP_PORT_WIRED to name your own entry."
+        )
+
+    plc = Plc(
+        HOST,
+        UDP_PORT_WIRED,
+        profile=PROFILE,
+        transport=TransportKind.UDP,
+        frame=FrameType.FOUR_E,
+        timeout=3.0,
+    )
+    async with plc:
+        assert plc.model == "FX5U-32MT/DS", "the wired UDP entry reached a different CPU"
+        assert plc.model_code == 0x4A49
+        reading = await plc.timed.read_f32(SP)
+        assert reading.tx.transport is TransportKind.UDP
+        assert reading.tx.frame is FrameType.FOUR_E
+        assert reading.tx.serial is not None, "4E carries a serial No.; 3E does not"
+        assert reading.value == await plc.read_f32(SP), "two reads of a held setpoint agree"
+        scan_first = await plc.read_f32(SCAN)
+        await asyncio.sleep(0.25)
+        assert await plc.read_f32(SCAN) > scan_first, "the CPU is scanning behind this entry"
+        measured(
+            "wired UDP entry",
+            port=UDP_PORT_WIRED,
+            peer=local,
+            setpoint=reading.value,
+            serial=reading.tx.serial,
+            wire_ms=round(reading.tx.timing.wire_ms, 3),
+        )
 
 
 # ========================================================================================
