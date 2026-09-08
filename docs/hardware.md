@@ -51,6 +51,67 @@ pooling against one entry is worthless and is not offered.
 UDP has no such limit: the entry binds to a peer address, not a socket, and two UDP sockets from
 different source ports were served concurrently.
 
+### 2.1 A reconnect within about 2 ms of your own `close()` can be refused
+
+Measured 2026-09-07 from **argus-bench, wired**, same /24, **median RTT 3.64 ms**, six trials per
+gap. A clean `close()`, then a reconnect to the same entry after the gap:
+
+| gap after a clean `close()` | reconnects that worked |
+| --- | --- |
+| 0 ms | 1/6 |
+| 1 ms | 2/6 |
+| 2 ms | **6/6** |
+| 5 ms and above, tested to 200 ms | 6/6 |
+
+From **a different host** (the laptop) over **Wi-Fi**, median RTT ~7 ms, the same test succeeded
+**30/30 at every gap including 0 ms**. The window is invisible there.
+
+**So it does not behave like a fixed hold period.** What has to elapse tracks the *link* rather
+than the clock: the slower link, which spends more time simply carrying the new SYN, never fails.
+The reading that fits is a race against the CPU's own connection teardown — its FIN processing —
+which a new SYN can arrive ahead of. **That is an inference from these timings and nothing more.**
+Nothing here can see inside the CPU, and a scan-cycle boundary or a connection-table sweep would
+produce the same table. What follows does not depend on which of those it is:
+
+- **The window is link-dependent.** Whatever the CPU is finishing, the network latency in front of
+  the new SYN is time the CPU has already been given. That is why the failure reproduces on wire
+  and not on Wi-Fi, and it means a link *faster* than this one should need *more* client-side gap,
+  not less. **That direction is a prediction, not a measurement** — the fastest link we have is
+  the 3.64 ms one in the table, and `A-ENTRY-RELEASE-RACE`'s probe exists to go and test it on a
+  gigabit switch at sub-1 ms RTT.
+- **2 ms is a measurement, not a guarantee, and not a spec value.** One CPU, one firmware, one
+  link, one host, one day, six trials a gap — and at 1 ms this CPU succeeded twice out of six, so
+  a single passing trial proves nothing about a gap. Do not design a timeout around this number.
+- **The two rows also differ by host, not only by link.** argus-bench wired against the laptop on
+  Wi-Fi changes two variables at once. Latency is the explanation that fits both rows and it is
+  the one we act on, but a same-host wired-and-wireless pair is the experiment that would settle
+  it, and it has not been run.
+
+**Teardown shape: not distinguished, on the link where it could not have been.** `close()`,
+`shutdown(RDWR)` then `close()`, and an abrupt RST via `SO_LINGER` 0 all reconnected cleanly and
+immediately — but that comparison was run **over Wi-Fi**, where the paragraph above says a clean
+`close()` at a 0 ms gap already succeeds 30/30. On that link nothing could have failed, so the
+result rules nothing out; it is recorded here so the next person repeats it on wire rather than
+trusting it. The one teardown that did fail intermittently was a socket **dropped without
+`close()`** and left to the garbage collector — the FIN goes out whenever the collector gets to
+it, which is a different bug with the same symptom.
+
+**What the library does:** nothing, on purpose. `SlmpConnectionEntryBusyError` is correct in this
+case too — the entry really was not this socket's — and the package has no default backoff on
+reconnect, so an immediate reconnect is the ordinary way to arrive here. What changed is the
+error's *explanation*: it names both causes, gives the measured window, and says the fix is a
+short settle rather than a hunt for a second client. There is no retry, and there is no wait
+inside the transport.
+
+**What the benchmarks do:** the bench scripts and `aslmp bench` bracket the library's rows with a
+raw-socket control, so every TCP run releases the entry and takes it straight back, twice. Each of
+those seams takes `aslmp.tools.bench.ENTRY_RELEASE_SETTLE_S` — 5 ms, taken outside every timed
+section. That is 2.5x the window **on the link it was measured on**, which by the argument above
+is not 2.5x anywhere else: bench from a faster host and 5 ms may not be enough. It will fail
+loudly if so — `SlmpConnectionEntryBusyError`, naming this section — rather than quietly skew a
+row. Until 2026-09-07 these seams had no settle at all, which is why an outside reviewer could not
+get `bench/transports.py` to run against this CPU. Registered as `A-ENTRY-RELEASE-RACE`.
+
 ## 3. `socket.connect()` proves nothing, so `connect()` runs a handshake
 
 `0x0619` Self Test with payload `b"0619"` + four hex digits of a per-generation nonce, echo

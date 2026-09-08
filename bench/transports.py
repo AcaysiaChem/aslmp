@@ -17,6 +17,16 @@ wins the tail and has nearly half the standard deviation, because on this link a
 datagram costs a full client timeout rather than a fast retransmit. **A control loop is
 a jitter problem, so TCP is the library's default.** Do not read the median and switch.
 
+**Why this script would not run at all until 2026-09-07.** Each table is control, client,
+control, and on TCP all three want the same connection entry. The CPU serves one TCP
+connection per entry and releases it as it processes the FIN, so a connect issued
+microseconds after the previous close arrives before the entry is free and raises
+``SlmpConnectionEntryBusyError`` with nothing else connected. Measured wired at a median
+RTT of 3.64 ms: 1/6 reconnects worked at a 0 ms gap, 2/6 at 1 ms, 6/6 from 2 ms out to
+200 ms. It is a race against FIN processing, not a hold period -- over Wi-Fi at ~7 ms RTT
+it never reproduced, because the link latency already covers the window. Every seam here
+therefore takes ``aslmp.tools.bench.ENTRY_RELEASE_SETTLE_S`` (5 ms), and nothing retries.
+
 Nothing here writes to the PLC.
 """
 
@@ -30,7 +40,12 @@ import asyncio
 from _report import Row, preamble, report
 
 from aslmp.client import Plc
-from aslmp.tools.bench import Distribution, raw_control, timed_samples
+from aslmp.tools.bench import (
+    Distribution,
+    raw_control,
+    settle_after_release,
+    timed_samples,
+)
 from aslmp.transport import TransportKind
 
 
@@ -71,6 +86,11 @@ async def one_transport(args: argparse.Namespace, kind: TransportKind, port: int
         ):
             samples = await timed_samples(call, samples=args.samples, warmup=args.warmup)
             rows.append(Row(Distribution(label, samples)))
+    if not udp:
+        # The client has just released the entry and the trailing control takes it back.
+        # `raw_control` settles on its own way out, so the leading control -> client seam
+        # is already covered; this is the other one. See ENTRY_RELEASE_SETTLE_S.
+        settle_after_release()
     rows.append(
         Row(
             raw_control(

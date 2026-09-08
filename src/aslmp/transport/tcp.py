@@ -78,6 +78,35 @@ _FIN_MEASUREMENT: Final = (
     "recv() returns 0 bytes before anything has been sent"
 )
 
+_ENTRY_RELEASE_MEASUREMENT: Final = (
+    "measured on FX5U-32MT/DS fw 1.065, 2026-09-07, wired, median RTT 3.64 ms, six "
+    "trials per gap: after a clean close() a reconnect to the same entry succeeded 1/6 "
+    "at a 0 ms gap, 2/6 at 1 ms, and 6/6 from 2 ms out to 200 ms. Over Wi-Fi at ~7 ms "
+    "RTT the same test was 30/30 at every gap including 0 ms, so what has to elapse "
+    "tracks the link and not the clock. That is what racing the CPU's own FIN "
+    "processing looks like from outside, rather than a fixed hold period -- an "
+    "inference from these timings, not something anything here can see inside the CPU. "
+    "Either way the window is link-dependent, so a faster link is expected to widen it, "
+    "and 2 ms is one CPU on one link on one day rather than a spec value"
+)
+"""Why the same client reconnecting into its own FIN gets the busy error (2026-09-07).
+
+Named beside :data:`_FIN_MEASUREMENT` because the two together are the whole error
+message: the entry serves one connection, and the moment it stops serving yours is not
+the moment your next ``connect()`` can have it.
+"""
+
+_ENTRY_RELEASE_ADVICE: Final = (
+    "The fix for that is a short explicit settle before reconnecting to an entry this "
+    "client just released -- 5 ms was clean on our wired bench, against the 2 ms window "
+    "measured there; a faster link may need more, and it will say so by raising this. "
+    "It is not a hunt for a second client, and it is not a retry loop: retrying a "
+    "connect that raced is how a client spins against a CPU that never had a problem. "
+    "See docs/hardware.md section 2.1."
+)
+"""What to do about it. A settle is a decision the caller makes once, in one place; a
+retry inside this transport would be exactly the silent recovery the package forbids."""
+
 
 @final
 class TcpTransport:
@@ -252,8 +281,11 @@ class TcpTransport:
         except ConnectionResetError as exc:
             raise SlmpConnectionEntryBusyError(
                 f"{self._host}:{self._port} accepted the TCP connection and then reset "
-                f"it before anything was sent. The SLMP connection entry is in use by "
-                f"another client, or the CPU refused this peer ({_FIN_MEASUREMENT})."
+                f"it before anything was sent. The SLMP connection entry did not become "
+                f"this socket's ({_FIN_MEASUREMENT}): either another client holds it, "
+                f"or this client closed its own connection to the same entry moments "
+                f"ago and reconnected before the CPU had processed the FIN. On the "
+                f"second: {_ENTRY_RELEASE_MEASUREMENT}. {_ENTRY_RELEASE_ADVICE}"
             ) from exc
         except OSError:
             peeked = None  # Some other socket state; the handshake is the proof.
@@ -263,10 +295,15 @@ class TcpTransport:
             raise SlmpConnectionEntryBusyError(
                 f"{self._host}:{self._port} accepted the TCP connection and immediately "
                 f"closed it: EOF was already waiting before this client sent a single "
-                f"byte. The SLMP connection entry is already in use -- socket.connect() "
-                f"succeeds anyway on this hardware ({_FIN_MEASUREMENT}). Use a "
-                f"different configured entry; connection pooling against one entry "
-                f"cannot work."
+                f"byte. The SLMP connection entry serves one TCP connection at a time "
+                f"and this socket did not get it -- socket.connect() succeeds anyway on "
+                f"this hardware ({_FIN_MEASUREMENT}). There are two causes and the "
+                f"second is the one people meet: (a) another client already holds the "
+                f"entry -- use a different configured entry, because connection pooling "
+                f"against one entry cannot work; (b) this client closed its own "
+                f"connection to the same entry moments ago and reconnected before the "
+                f"CPU had processed the FIN. If nothing else is connected it is (b): "
+                f"{_ENTRY_RELEASE_MEASUREMENT}. {_ENTRY_RELEASE_ADVICE}"
             )
         raise SlmpProtocolError(
             f"{len(peeked)} unsolicited byte(s) were already waiting on a freshly "
@@ -464,9 +501,14 @@ class TcpTransport:
         if self._transactions_completed == 0 and received == 0:
             return SlmpConnectionEntryBusyError(
                 f"{self._host}:{self._port} closed the connection without answering the "
-                f"first request on it. The SLMP connection entry is in use by another "
-                f"client: {_FIN_MEASUREMENT}. Nothing was read, so nothing about the "
-                f"coding or the frame format has been proven either."
+                f"first request on it. On this hardware that means the SLMP connection "
+                f"entry never became this socket's ({_FIN_MEASUREMENT}). Two causes: "
+                f"another client holds the entry, or this client closed its own "
+                f"connection to the same entry moments ago and reconnected before the "
+                f"CPU had processed the FIN. With nothing else connected it is the "
+                f"second: {_ENTRY_RELEASE_MEASUREMENT}. {_ENTRY_RELEASE_ADVICE} Nothing "
+                f"was read, so nothing about the coding or the frame format has been "
+                f"proven either."
             )
         return SlmpConnectionLostError(
             f"{self._host}:{self._port} closed the connection after {received} byte(s) "

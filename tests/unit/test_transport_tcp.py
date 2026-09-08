@@ -247,6 +247,32 @@ async def a_pair(*, then: str) -> tuple[socket.socket, socket.socket]:
     return client, server
 
 
+def assert_names_both_entry_busy_causes(error: SlmpConnectionEntryBusyError) -> None:
+    """Both causes, the measured window and the settle, in the message itself.
+
+    The wording is load-bearing. An outside reviewer met this error repeatedly with
+    nothing else connected to the CPU: the same client was reconnecting to the entry it
+    had just released, inside the CPU's FIN processing, and the old message -- "the SLMP
+    connection entry is in use by another client" -- sent them hunting a second client
+    that did not exist.
+
+    The race itself is deliberately **not** reproduced anywhere in this file. It is a
+    property of the CPU's FIN processing rather than of this code, the window is about
+    2 ms on our wired link and *wider* on a faster one, and a test that tried to hit it
+    would flake on every machine that is not that bench. The measurement is in
+    ``docs/hardware.md`` section 2.1 and in ``aslmp/data/ambiguities.tsv`` as
+    ``A-ENTRY-RELEASE-RACE``; this asserts only that the message carries it.
+    """
+    message = str(error)
+    assert "another client" in message, "the second-client cause must still be named"
+    assert "FIN" in message, "the self-inflicted cause is a race against FIN processing"
+    assert "reconnect" in message, "say that reconnecting is what did it"
+    assert "2 ms" in message and "3.64 ms" in message, "give the measured window and link"
+    assert "link-dependent" in message, "a faster link widens the window; say so"
+    assert "settle" in message, "name the fix"
+    assert "not a retry loop" in message, "and rule out the wrong one"
+
+
 async def test_a_fin_that_has_already_arrived_is_named_entry_busy() -> None:
     """Graft G2, with the race removed: the FIN is provably delivered before the check."""
     client, server = await a_pair(then="fin")
@@ -257,7 +283,7 @@ async def test_a_fin_that_has_already_arrived_is_named_entry_busy() -> None:
     finally:
         client.close()
         server.close()
-    assert "already in use" in str(caught.value)
+    assert_names_both_entry_busy_causes(caught.value)
     assert "pooling" in str(caught.value)
 
 
@@ -419,12 +445,54 @@ async def test_a_zero_byte_read_on_the_first_transaction_is_entry_busy() -> None
     async with FakeServer(default=Reply(close_after=True)) as server:
         transport = await connected(server)
         try:
-            with pytest.raises(SlmpConnectionEntryBusyError):
+            with pytest.raises(SlmpConnectionEntryBusyError) as caught:
                 await transport.exchange(
                     REQUEST, FixedLength(20), a_deadline(), a_timing()
                 )
         finally:
             await transport.close()
+    assert_names_both_entry_busy_causes(caught.value)
+    assert "coding" in str(caught.value), "nothing was read, so nothing was proven"
+
+
+async def test_the_entry_busy_message_does_not_send_the_reader_hunting_one_cause() -> None:
+    """The reviewer's afternoon: this error with nothing else connected to the CPU.
+
+    Both entry-busy paths -- the FIN already waiting at connect, and the zero-byte read
+    on the first transaction -- must offer the reconnect race as well as the second
+    client, because with no default backoff on reconnect the race is the common way to
+    get here. See ``docs/hardware.md`` section 2.1 for the numbers behind the wording.
+    """
+    at_connect: SlmpConnectionEntryBusyError
+    client, server = await a_pair(then="fin")
+    transport = TcpTransport("127.0.0.1", 5002)
+    try:
+        with pytest.raises(SlmpConnectionEntryBusyError) as caught:
+            transport._check_no_early_eof(client)
+        at_connect = caught.value
+    finally:
+        client.close()
+        server.close()
+
+    async with FakeServer(default=Reply(close_after=True)) as fake:
+        second = await connected(fake)
+        try:
+            with pytest.raises(SlmpConnectionEntryBusyError) as caught:
+                await second.exchange(REQUEST, FixedLength(20), a_deadline(), a_timing())
+        finally:
+            await second.close()
+
+    for error in (at_connect, caught.value):
+        assert_names_both_entry_busy_causes(error)
+        text = str(error)
+        assert "in use by another client" not in text, (
+            "the old wording named one cause as if it were the only one, and it is the "
+            "less likely of the two"
+        )
+        assert "300 ms" not in text, (
+            "the settle is 5 ms against a measured 2 ms window; 300 ms was the "
+            "reviewer's guess and this library does not publish guesses as numbers"
+        )
 
 
 async def test_a_zero_byte_read_after_a_working_transaction_is_a_lost_connection() -> None:

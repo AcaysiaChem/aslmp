@@ -664,12 +664,33 @@ class SlmpTransportError(SlmpError):
 
 
 class SlmpConnectionEntryBusyError(SlmpTransportError):
-    """TCP accepted and then the CPU immediately FINed: the entry is already in use.
+    """TCP accepted and then the CPU immediately FINed: this socket did not get the entry.
 
-    Measured on FX5U-32MT/DS fw 1.065: a second connection to a one-entry SLMP
-    configuration completes ``connect()`` and then ``recv()`` returns 0 bytes before
+    Measured on FX5U-32MT/DS fw 1.065, 2026-09-06: a second connection to a one-entry
+    SLMP configuration completes ``connect()`` and then ``recv()`` returns 0 bytes before
     anything is sent. ``socket.connect()`` demonstrably lies on this hardware, which is
     why the handshake exists and why the non-blocking EOF check runs first.
+
+    **Two causes, and the second one is easy to miss.** A second client really holding
+    the entry is the obvious one. The other is *this* client reconnecting into its own
+    ``close()``: measured 2026-09-07 on a wired link with a median RTT of 3.64 ms, a
+    reconnect straight after a clean ``close()`` succeeded 1/6 at a 0 ms gap, 2/6 at
+    1 ms, and 6/6 from 2 ms out to 200 ms. It does not behave like a fixed hold period --
+    over Wi-Fi at ~7 ms RTT the same test never failed at any gap, so what has to elapse
+    tracks the link rather than the clock, which is what racing the CPU's own FIN
+    processing would look like from outside. That mechanism is an inference from the
+    timings and not something this library can see; the consequence holds either way, so
+    the window is link-dependent, a faster link should widen it, and 2 ms is one CPU on
+    one link on one day rather than a spec value. Since this package has no default
+    backoff on reconnect, an immediate reconnect is the ordinary way to arrive here --
+    which is why an outside reviewer met this error repeatedly with nothing else
+    connected to the CPU, and went looking for a second client that did not exist.
+
+    The fix for that second cause is a short explicit settle before reconnecting to an
+    entry this client just released, not a search for a phantom second client and not a
+    retry loop. The error itself is correct in both cases and stays an error: nothing in
+    this package retries a connect. See ``docs/hardware.md`` section 2.1, and
+    ``A-ENTRY-RELEASE-RACE`` in ``aslmp/data/ambiguities.tsv``.
     """
 
 

@@ -18,6 +18,13 @@ are comparable. A single mean would hide the one thing worth knowing -- on our b
 wins the median (6.20 vs 7.41 ms) and TCP wins the tail (p99 10.49 vs 13.80, stdev 1.03
 vs 1.79), and only one of those matters for a loop.
 
+**Bracketing the run means releasing an entry and taking it straight back**, twice. An
+SLMP connection entry is not instantly available to the next ``connect()`` after its own
+close, so a connect that arrives too soon gets ``SlmpConnectionEntryBusyError`` with
+nothing else connected.
+Every seam here takes :data:`ENTRY_RELEASE_SETTLE_S`, a 5 ms wait against a 2 ms measured
+window; see that constant for the table it comes from. It is a settle, not a retry.
+
 **Nothing here writes to the PLC.** Every suite is a read, and there is no flag that
 makes one a write: a benchmark is the last place you want a mutation, and a write
 benchmark against a machine in RUN is somebody else's decision to make deliberately.
@@ -36,7 +43,7 @@ import struct
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from aslmp.errors import SlmpError, SlmpUsageError
 from aslmp.tools import EXIT_OK
@@ -53,7 +60,64 @@ from aslmp.tools._common import (
 if TYPE_CHECKING:
     from aslmp.client import Plc
 
-__all__ = ["Distribution", "build_parser", "raw_control", "run", "timed_samples"]
+__all__ = [
+    "ENTRY_RELEASE_SETTLE_S",
+    "Distribution",
+    "build_parser",
+    "raw_control",
+    "run",
+    "settle_after_release",
+    "timed_samples",
+]
+
+
+# ----------------------------------------------------------------------------------------
+# Releasing an entry and taking it again in the same breath
+# ----------------------------------------------------------------------------------------
+
+ENTRY_RELEASE_SETTLE_S: Final = 0.005
+"""Seconds to wait after releasing an SLMP connection entry before connecting to it again.
+
+A benchmark run is the one place that closes a connection to an entry and immediately
+opens another to the same entry -- the control brackets the library's rows, so there are
+two such seams in every run. Without this wait the second connect can lose a race the CPU
+does not know it is running.
+
+**Measured on FX5U-32MT/DS fw 1.065, 2026-09-07**, from a wired host on the same /24 with
+a median RTT of 3.64 ms, six trials per gap:
+
+    gap after a clean close() -> next connect
+       0 ms                1/6 OK
+       1 ms                2/6 OK
+       2 ms                6/6 OK
+       5 ms and above      6/6 OK   (tested to 200 ms)
+
+It does **not behave like a fixed hold period**: the same test over Wi-Fi at ~7 ms RTT was
+30/30 at every gap including 0 ms, so what has to elapse tracks the link rather than the
+clock, and the slower link's own latency already covers it. That fits a race against the
+CPU's own FIN processing, which is the reading ``A-ENTRY-RELEASE-RACE`` records -- an
+inference from the timings, not something visible from out here. The consequence holds
+either way: the number is **link-dependent, and a faster link should widen the window**,
+so 2 ms is what one CPU did on one link from one host on one day rather than a spec value.
+5 ms is that measurement with a 2.5x margin **on that link**, which is not a 2.5x margin
+on a faster one; it is chosen because it is free once per bench run.
+
+If it is ever not enough the run fails loudly with
+:class:`~aslmp.errors.SlmpConnectionEntryBusyError`, which now says so. It is deliberately
+not a retry loop: retrying a connect would be the silent recovery this package refuses
+everywhere else, and it would hide a genuinely busy entry behind a slow success.
+"""
+
+
+def settle_after_release() -> None:
+    """Block for :data:`ENTRY_RELEASE_SETTLE_S` after releasing a TCP entry.
+
+    Called by the *releaser*, straight after the socket is closed, so that whatever
+    connects next to that entry -- the library's client, or the trailing control -- is
+    not racing this process's own FIN. Blocking is correct here: a bench has nothing else
+    to do, and the wait must have happened before the next connect starts.
+    """
+    time.sleep(ENTRY_RELEASE_SETTLE_S)
 
 
 # ----------------------------------------------------------------------------------------
@@ -222,6 +286,11 @@ def raw_control(
 
     Blocking on purpose: an event loop between the clock and the socket is exactly the
     overhead this control exists to exclude.
+
+    On TCP it calls :func:`settle_after_release` on the way out. The control holds the
+    same connection entry the library's rows are about, and whoever connects next --
+    normally within microseconds -- would otherwise race this close. The wait is outside
+    every timed section and cannot touch a sample.
     """
     request = _control_request(head, words)
     timings: list[float] = []
@@ -249,6 +318,11 @@ def raw_control(
                 timings.append(elapsed)
     finally:
         sock.close()
+        if not udp:
+            # We have just released the entry. A UDP entry is bound to a peer address
+            # rather than to a socket -- two UDP sockets from different source ports
+            # were served concurrently on the bench -- so only TCP has this to settle.
+            settle_after_release()
     return Distribution(label, tuple(timings), "raw socket, no aslmp code")
 
 
@@ -355,6 +429,10 @@ def run(argv: Sequence[str]) -> int:
         async with plc:
             for name in wanted:
                 rows.append((await _run_suite(plc, name, args)).row())
+        if not udp:
+            # The client has just released the entry and the trailing control is about
+            # to take it again. Same seam, same settle, same measurement.
+            settle_after_release()
 
         after = raw_control(
             args.host,
