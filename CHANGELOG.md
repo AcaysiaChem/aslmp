@@ -55,8 +55,10 @@ Every item here exists because of something the bench did, and each is written u
 - UDP: per-transaction epoch, rebind to a fresh source port on timeout, `SlmpDatagramLostError`
   naming the serial and the in-flight depth. Pipelining requires 4E; **3E/UDP pipelining is
   refused outright.**
-- `TransportKind.TCP` is the default: UDP wins the median (p50 6.20 vs 7.41 ms) and TCP wins the
-  tail (p99 10.49 vs 13.80, stdev 1.03 vs 1.79), and a control loop is a jitter problem.
+- `TransportKind.TCP` is the default — for **configurability**, not for latency. A UDP SLMP entry
+  on iQ-F is point-to-point (GX Works3 will not save one without a destination IP, and there are
+  eight entries in total), and loss is silent on UDP. The latency argument this default originally
+  rested on was withdrawn on 2026-09-07; see the wired re-measurement below.
 - Three end-code corrections shipped with `Provenance.LIVE`: `0xC05C` (not `0xC05B`) for an
   absent device family, `0xC052` (a point-count error) for zero points, `0xC061` for an
   understated length with no response at all when overstated.
@@ -148,7 +150,7 @@ and all 23 pass against FX5U-32MT/DS fw 1.065 at 192.168.10.250.
   at module scope). `read_block`/`write_block` take a bound `BlockPlan`, never a class: binding per
   cycle would rebuild and revalidate the frame per cycle, which is the whole cost `bind` pays once.
 - **`Plc(udp_pipeline_depth=…)`, additive to the locked constructor of DESIGN section 2.2.** 4E over
-  UDP is measured clean to depth 32 and loses ~31% at 64, but the client had no door to it and
+  UDP is measured clean to depth 32 and lossy above it, but the client had no door to it and
   built every `UdpTransport` at depth 1, so a capability the transport implemented was unreachable.
   It defaults to 1, is refused above 1 on 3E (no serial to correlate by) and is **refused, not
   ignored, on TCP** — accepting a number that cannot take effect is the shape of failure this
@@ -189,14 +191,93 @@ controller (`60.0` at `D0` as `0x0000 0x4270`; assembled the other way it reads 
 `3.4028235e38` round-trips through `D100` as `0xFFFF 0x7F7F` — the register above `0x7FFF` that
 `pymcprotocol` packs with `'<h'` and cannot write.
 
+### Re-measured on a WIRED link, 2026-09-07 — one published claim withdrawn, two of our bugs found
+
+An external reviewer challenged several of the claims above. Re-measuring from a second host —
+`argus-bench`, 192.168.10.36, **wired**, 3.64 ms median RTT, through a UDP connection entry
+(5005) added to the CPU for it — **overturned one of them and exposed two real bugs**. Everything
+in this block is written from the wired numbers, and every latency table in the documentation now
+names its host and its link as well as the CPU, the firmware and the date.
+
+- **Withdrawn: "UDP wins the median, TCP wins the tail."** That was the published justification
+  for `TransportKind.TCP` being the default, and it **did not reproduce on wire**. Interleaved
+  TCP/UDP/TCP/UDP/TCP, 300 samples each, controls before and after drifting 0.01 ms at p50: UDP
+  wins **every** percentile — p50 2.42 against 3.63 ms, p90 3.40 against 4.05, p99 3.56 against
+  4.69 — at essentially equal standard deviation (0.40 against 0.36). The Wi-Fi tail result was a
+  property of the radio, where a lost datagram costs a full client timeout and TCP fast
+  retransmits. **The default is unchanged and its justification is replaced**: a UDP entry on
+  iQ-F is point-to-point, so it only serves hosts somebody configured an entry for, out of eight;
+  a TCP entry serves any peer; and loss is silent on UDP. `aslmp.client.TRANSPORT_CHOICE` carries
+  the corrected note, `docs/hardware.md` section 5 prints both tables side by side, and the
+  withdrawal is a row of the shipped ambiguity table (`A-UDP-TAIL-LATENCY`), because what we got
+  wrong in public is more use to the next person than the conclusion was.
+- **Corrected: the UDP receive queue is a hard 32, not a soft degradation.** Wired, depth 48
+  answered exactly 32 and lost 16; depth 64 answered exactly 32 and lost 32. The earlier Wi-Fi
+  reading of 44/64 — "~31% loss at 64" — came from a link slow enough that the CPU drained part
+  of the queue while the rest of the burst was still arriving. Pipelining to 32 buys ~1.5x over
+  serial TCP on wire (405 against 276 txn/s), not the ~2.7x the Wi-Fi numbers suggested.
+- **Remote RUN, STOP and PAUSE are now measured**, against the CPU's own free-running scan
+  counter rather than SD203 alone. The reason for abstaining — a memory-card error that once left
+  this CPU declining a remote RUN — is gone with the card. **`0x1006` Reset and `0x1005` Latch
+  Clear were still not sent and remain unverified**, as does the behaviour that makes
+  `verify=True` the default: Remote RUN returning `0x0000` with the switch in STOP could not be
+  forced on a bench whose switch is in RUN, so it stays a manual claim in `docs/unverified.md`.
+  (The reviewer independently saw GX Works3 report "The RUN operation has been completed" while
+  P.RUN stayed dark — the same lie through Mitsubishi's own tool, and still not our measurement.)
+- **Bug, shipped and fixed: `verify=True` raised for a RUN the CPU had accepted.** Leaving RUN is
+  effectively synchronous (SD203 correct on the first poll, 3 of 3, ~18–21 ms) but **entering RUN
+  is not** (SD203 still `STOP` on the first poll in 2 of 3 cycles, reaching `RUN` at 25–33 ms).
+  `_apply` read SD203 exactly once, immediately, so the safety default produced a false
+  `SlmpRemoteStateNotReachedError` roughly two thirds of the time — unusable in practice. Now it
+  observes SD203 to a bounded deadline (`REMOTE_SETTLE_SECONDS` = 0.25 s, an order of magnitude
+  above the worst transition seen) and returns the instant the state matches. **This is not a
+  retry and not silent recovery**: the state-changing command is sent exactly once and never
+  re-sent; what repeats is the *observation*, and `RemoteResult.polls` reports how many reads it
+  took. `run(verify=True)` costs 3 transactions, which is what the measurement predicts.
+- **Bug, shipped and fixed: the README's own block example declared the wrong field type.** The
+  front-door example read the free-running counter as `U32` where the PLC program's global label
+  is `FLOAT [Single Precision]`, decoding a float's bit pattern as `1226168560`. Nastier than it
+  looks: IEEE-754 patterns rise monotonically for positive floats, so the counter still
+  *increased* every cycle and a naive "is it advancing?" check passed — ours did. Only the rate
+  is wrong, and it drifts, because a `+1.0` moves the `U32` reading by one ulp-step. The example
+  is corrected and says so, and the response in code is **declared plausibility bounds**:
+  `Annotated[float, F32(minimum=…, maximum=…)]` on block fields and `minimum=`/`maximum=` on the
+  typed scalar reads, raising `SlmpImplausibleValueError` rather than returning the value.
+  Nothing sniffs types and nothing clamps: a D register carries no type on the wire, so the
+  library holds you to the promise you made and refuses to guess.
+- **The entry-release race, measured and explained.** A reconnect within ~2 ms of your own clean
+  `close()` can be refused: 1/6 at 0 ms, 2/6 at 1 ms, 6/6 from 2 ms out to 200 ms, wired. Over
+  Wi-Fi the same test was 30/30 at every gap including 0 ms — **the window is link-dependent and
+  invisible on a slow link**, which is why an outside reviewer could not run `bench/transports.py`
+  at all. It is a race against the CPU's FIN processing, not a hold period, and a *faster* link
+  should need *more* client-side gap. The library still does nothing about it on purpose; the
+  bench scripts take a named `ENTRY_RELEASE_SETTLE_S` (5 ms) outside every timed section, and
+  `SlmpConnectionEntryBusyError` now names both causes. Ambiguity `A-ENTRY-RELEASE-RACE`.
+- **A five-minute closed-loop soak, `bench/soak.py`.** 15,000 cycles, 30,005 transactions, 300.0 s
+  at exactly 50.0 Hz, wired, TCP 5002: **0 errors, 0 reconnects, 0 entry-busy, 0 cadence
+  overruns**, block read p50 3.67 / p99 4.69 ms with the p50 moving 3.72 → 3.67 ms across the run,
+  and the CPU scanning at 969/s under load against 1029/s idle. The claim worth having is not the
+  latency: the bench PLC's controller has a proportional band of 12 %/K, so `MV == clamp(Err * 12,
+  0, 100)` must hold within every `0x0403` snapshot, and the soak asserts it **every cycle**.
+  Read back in full `f32` precision, `Err` 0.4399986267089844 → `MV` 5.2799835205078125 and `Err`
+  3.477001190185547 → `MV` 41.72401428222656, plus a sweep across both clamps — deviating by
+  exactly 0.0 everywhere. A client that decoded garbage could still draw a smooth latency
+  curve; it could not close the PLC's own gain arithmetic to the last bit of an `f32`. This is the
+  first table `bench/` has published, and it is the only script here that writes to a PLC.
+
 ### Known limitations shipped knowingly
 
 Listed in full in [`docs/unverified.md`](docs/unverified.md) and in `aslmp capabilities
 --unverified-only`. In short: our iron is **one** FX5U-32MT/DS on firmware 1.065, binary 3E/4E,
-over TCP and UDP. The entire ASCII path, the iQ-R / Q / L profiles, every remote-control command,
-`0x0406`/`0x1406` block access, the remote password commands and `0x2101` receipt are all
-implemented, gated and **labelled unverified**.
+over TCP and UDP, from two hosts on two links. The entire ASCII path, the iQ-R / Q / L profiles,
+Remote Reset and Latch Clear, `0x0406`/`0x1406` block access, the remote password commands and
+`0x2101` receipt are all implemented, gated and **labelled unverified**. Remote RUN, STOP and
+PAUSE are measured; the switch-in-STOP behaviour that justifies `verify=True` is not.
 
-`bench/` has published no measured numbers yet: the scripts are exercised against the simulator
-and have not been run against the FX5U. The numbers in the table above come from
-`tests/hardware/test_fx5u.py`, which does carry its own same-session raw-socket control.
+`bench/transports.py` and `bench/access_patterns.py` have published no measured numbers: they are
+exercised against the simulator and have not been run against the FX5U. The Wi-Fi table above
+comes from `tests/hardware/test_fx5u.py`, which carries its own same-session raw-socket control;
+the wired transport comparison carries a control before and after, and their 0.01 ms drift is
+published beside it. Treat the wired soak's absolute milliseconds as the weakest row in it — its
+counters, its internal p50 drift and its per-cycle arithmetic assertion are what it is evidence
+for, and `bench/soak.py` brackets every future run with the standard control.

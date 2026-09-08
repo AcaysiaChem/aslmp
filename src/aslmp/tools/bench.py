@@ -14,9 +14,14 @@ plant network than anybody's overhead. Compare the two before you compare anythi
 
 **Distributions, never a mean.** A control loop is a jitter problem: min / p50 / p90 /
 p99 / max / stdev, from the same nearest-rank function for both sides so the two columns
-are comparable. A single mean would hide the one thing worth knowing -- on our bench UDP
-wins the median (6.20 vs 7.41 ms) and TCP wins the tail (p99 10.49 vs 13.80, stdev 1.03
-vs 1.79), and only one of those matters for a loop.
+are comparable. A single mean would hide the one thing worth knowing, and the transport
+comparison is the case in point: on Wi-Fi (2026-09-06, the laptop) the two transports
+split the columns -- UDP took the median, 6.20 against 7.41 ms, and TCP took the tail,
+p99 10.49 against 13.80 -- while on wire (2026-09-07, ``argus-bench``, interleaved,
+control drift 0.01 ms at p50) there is no split at all and UDP takes p50, p90 and p99
+alike, 2.42 / 3.40 / 3.56 against 3.63 / 4.05 / 4.69. Same client, same CPU, same
+command; two different shapes. Only percentiles show that they *are* different shapes,
+and only the link label says which one you are reading.
 
 **Bracketing the run means releasing an entry and taking it straight back**, twice. An
 SLMP connection entry is not instantly available to the next ``connect()`` after its own

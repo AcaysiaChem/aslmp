@@ -220,8 +220,11 @@ FX5_REMOTE: Final = Citation(
     "JY997D56001", "K", "4.2 Remote operation (p.103-108)",
     note=(
         "The fixed field of 1002 / 1005 / 1006 is printed as 00 00 here and as 01 00 in "
-        "SH(NA)-080956ENG-M; see A-REMOTE-FIXED. We deliberately never sent a CPU-state "
-        "command to the bench, so every remote row is documentary."
+        "SH(NA)-080956ENG-M; see A-REMOTE-FIXED. 1001 RUN, 1002 STOP and 1003 PAUSE "
+        "were sent to the bench on 2026-09-07 and did what they say, checked against "
+        "the PLC program's own scan counter; 1005 Latch Clear and 1006 Reset have never "
+        "been sent, and 00 00 was accepted but 01 00 was never tried, so whether 00 00 "
+        "is required or merely accepted is still open."
     ),
 )
 FX5_CLEAR_ERROR: Final = Citation(

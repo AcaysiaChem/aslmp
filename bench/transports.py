@@ -10,12 +10,26 @@ distributions were taken minutes apart on the same link, and it is only interpre
 each has its own raw-socket control -- UDP's control is a different code path in the
 kernel, so borrowing TCP's would compare two different things.
 
-**What we measured, 2026-09-06, FX5U-32MT/DS fw 1.065, Wi-Fi:** 300 sequential 2-word
-reads each way gave UDP p50 6.20 / p99 13.80 / stdev 1.79 and TCP p50 7.41 / p99 10.49 /
-stdev 1.03. UDP wins the median by about 1.2 ms because there is no ACK round trip; TCP
-wins the tail and has nearly half the standard deviation, because on this link a lost
-datagram costs a full client timeout rather than a fast retransmit. **A control loop is
-a jitter problem, so TCP is the library's default.** Do not read the median and switch.
+**What we measured, and the conclusion the link overturned.** FX5U-32MT/DS fw 1.065,
+300 sequential 2-word reads each way.
+
+*2026-09-06, from the laptop over Wi-Fi:* UDP p50 6.20 / p99 13.80 / stdev 1.79 and TCP
+p50 7.41 / p99 10.49 / stdev 1.03. UDP won the median, TCP won the tail, and that tail
+was published as the reason TCP is the default.
+
+*2026-09-07, from ``argus-bench`` over the wired link*, TCP/UDP interleaved with controls
+before and after that drifted 0.01 ms at p50: UDP p50 2.42 / p90 3.40 / p99 3.56 / sd
+0.40 against TCP p50 3.63 / p90 4.05 / p99 4.69 / sd 0.36. **UDP wins at every
+percentile, including the tail.** The Wi-Fi tail result was a property of the radio,
+where a lost datagram costs a full client timeout and TCP fast retransmits; over 600
+wired UDP samples that never fired.
+
+**The default did not change; its justification did.** TCP is the default for
+configurability: a UDP SLMP entry on iQ-F is point-to-point, GX Works3 will not save one
+without a destination IP, there are at most eight entries on the CPU, and a TCP entry
+serves any peer. Loss is also silent on UDP. Where an entry exists for your host and the
+link is wired, UDP is the faster choice and you should take it deliberately. Run this
+script on *your* link before quoting either table.
 
 **Why this script would not run at all until 2026-09-07.** Each table is control, client,
 control, and on TCP all three want the same connection entry. The CPU serves one TCP
@@ -127,9 +141,13 @@ async def main() -> int:
         sections.append(await one_transport(args, kind, port))
     print("\n".join(sections))
     print(
-        "TCP is the library's default. UDP wins the median and loses the tail, and a "
-        "control loop is a jitter problem. Compare the p99 and stdev columns, not the "
-        "p50, before switching."
+        "TCP is the library's default for CONFIGURABILITY, not speed: a UDP SLMP entry "
+        "on iQ-F is point-to-point and there are at most eight entries on the CPU, "
+        "while a TCP entry serves any peer, and loss is silent on UDP. On the wired "
+        "retest (2026-09-07) UDP was faster at every percentile; on Wi-Fi (2026-09-06) "
+        "TCP won the tail. Which of those two shapes you just measured is a property of "
+        "YOUR link, so read the whole distribution above -- and write down the link "
+        "before quoting any of it."
     )
     return 0
 

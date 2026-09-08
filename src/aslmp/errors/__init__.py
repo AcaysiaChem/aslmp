@@ -757,14 +757,17 @@ class SlmpDatagramLostError(SlmpTransportError):
     """A UDP request vanished: no response, no end code, no ICMP, nothing.
 
     **Its own class, never a generic timeout.** Measured on FX5U-32MT/DS fw 1.065 over
-    UDP (GX Works3 connection entry No. 2, PLC port 5001), 2026-09-06: bursts of 4E
-    reads fired without waiting returned 8/8 and 32/32 with zero loss, and **44/64** at
-    depth 64 -- 20 requests dropped by the PLC's receive path with no error anywhere.
-    The client finds out only by a serial that never comes back.
+    UDP (GX Works3 connection entry No. 2, PLC port 5001), 2026-09-06 **over Wi-Fi**:
+    bursts of 4E reads fired without waiting returned 8/8 and 32/32 with zero loss, and
+    **44/64** at depth 64 -- 20 requests dropped by the PLC's receive path with no error
+    anywhere. Wired from ``argus-bench`` on 2026-09-07 (UDP entry port 5005) the same
+    ladder answered exactly 32 at depth 48 and exactly 32 at depth 64: the queue is a
+    hard 32 on both links, and the 44 was a slow burst letting the CPU drain part of it
+    mid-flight. The client finds out only by a serial that never comes back.
 
     ``serial`` is the 4E serial that never returned and ``in_flight`` is the depth at
     the moment it was sent, because those two numbers *are* the diagnosis: at depth 32
-    this does not happen, and at depth 64 it happened to a third of the burst. Reporting
+    this does not happen, and above it everything past the 32nd is discarded. Reporting
     it as :class:`SlmpTimeoutError` would send the reader looking at the network.
 
     3E has no serial (``serial is None``), which is why 3E/UDP pipelining is never

@@ -5,10 +5,12 @@
 An SLMP connection entry is not a unit of capacity. It is a row in the GX Works3 Ethernet
 Port "External Device Configuration" table with its own protocol, its own port and --
 because the Communication Data Code is an Own Node parameter -- its own coding. Our own
-bench has five of them and they are not interchangeable: four are TCP and one is
-**UDP**, which on FX5U-32MT/DS fw 1.065 has a different latency distribution (p50 6.20 ms
-against 7.41 ms, p99 10.49 ms against 13.80 ms, 2026-09-06) and a different failure mode
-(a lost datagram, with no end code and no ICMP).
+bench has six of them and they are not interchangeable: four are TCP and two are
+**UDP**, which on FX5U-32MT/DS fw 1.065 has a different latency distribution (p50 2.42 ms
+against 3.63 ms, p99 3.56 against 4.69, n=300 each, 2026-09-07 from ``argus-bench`` over
+the **wired** link) and a different failure mode (a lost datagram, with no end code and
+no ICMP). A UDP entry is also point-to-point -- it serves the one host GX Works3 was told
+about -- so the two are not even reachable from the same places.
 
 So :class:`EntryGroup` has named handles and nothing else. There is deliberately **no**
 ``lease()``, no round-robin, no "least loaded" and no automatic failover (DESIGN.md graft

@@ -160,9 +160,11 @@ FIXED_FIELD_AMBIGUITY: Ambiguity = Ambiguity(
         "the field on Q and L."
     ),
     probe=(
-        "FX5U in STOP with a scratch program: send 1002 with 01 00 and record the end "
-        "code, then repeat with 00 00. We deliberately never sent any CPU-state command "
-        "to the bench, so this is untested by us in both directions."
+        "FX5U with a scratch program: send 1002 with 01 00 and record the end code, "
+        "then repeat with 00 00, checking the scan counter in both cases rather than "
+        "trusting the end code. Half of that has now been done -- 00 00 was sent to the "
+        "bench on 2026-09-07 and the CPU stopped -- and the half that would settle it, "
+        "01 00, has not been sent. 1005 and 1006 have never been sent at all."
     ),
 )
 """The row ``aslmp ambiguities`` prints for the fixed field, quoted in the docstrings."""
@@ -184,12 +186,16 @@ CLEAR_MODE_AMBIGUITY: Ambiguity = Ambiguity(
     reason=(
         "The FX5 manual contradicts itself on one page, and the consequence of guessing "
         "wrong is clearing a running machine's latch range. Refusing is the only "
-        "defensible default when the document disagrees with itself and we have no "
-        "measurement."
+        "defensible default when the document disagrees with itself. Since 2026-09-07 "
+        "the refusal is no longer for want of any measurement: 1001 with ClearMode.NONE "
+        "was sent to the bench repeatedly and worked. 01H and 02H were not sent, and "
+        "sending them is the part that would clear devices."
     ),
     probe=(
         "1001 with clear mode 01H and then 02H against a scratch program on a CPU in "
-        "STOP: record the end code, and check whether devices actually cleared."
+        "STOP: record the end code, and check whether devices actually cleared -- the "
+        "end code alone cannot distinguish 'accepted and cleared' from 'accepted and "
+        "ignored'. 00H is measured; the other two are untested by us."
     ),
 )
 """The row behind the clear-mode refusal."""

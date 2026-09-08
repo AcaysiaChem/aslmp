@@ -2,17 +2,22 @@
 
 Everything here is measured on **MELSEC iQ-F FX5U-32MT/DS, firmware 1.065**, over GX
 Works3 connection entry No. 2 (SLMP / UDP / PLC port 5001 / destination 192.168.10.41),
-2026-09-06. The findings reverse the naive assumption that UDP is the riskier transport,
-and they are the reason this file is shaped the way it is.
+2026-09-06, **from that laptop over Wi-Fi** -- except where a wired retest is named. The
+findings reverse the naive assumption that UDP is the riskier transport, and they are the
+reason this file is shaped the way it is.
 
 **1. UDP does not suffer the TCP coalescing corruption.** Two requests written without
 reading between them returned *both* responses, correct and in order, where TCP returned
 one response for the last request with end code ``0x0000``. Datagrams are framed, so the
 failure does not exist. The one-transaction-in-flight rule is a TCP rule.
 
-**2. Pipelining is clean to depth 32 and loses silently at 64.** Bursts of 4E reads fired
-without waiting: 8/8, 32/32, and **44/64** -- twenty requests dropped by the PLC's receive
-path with no end code, no ICMP, and no error of any kind. The client finds out only from a
+**2. The receive queue is a hard 32, and overflow is silent.** Bursts of 4E reads fired
+without waiting gave 8/8, 32/32 and **44/64** here -- twenty requests dropped by the PLC's
+receive path with no end code, no ICMP, and no error of any kind. Repeated 2026-09-07 from
+``argus-bench`` over the **wired** link (UDP entry port 5005), depth 48 answered exactly 32
+and depth 64 answered exactly 32, so the ceiling is a hard 32 rather than the soft
+degradation the 44 suggested: on the slower link the CPU drains part of the queue while the
+rest of the burst is still arriving. The client finds out only from a
 serial No. that never comes back, which is why that case raises its own
 :class:`~aslmp.errors.SlmpDatagramLostError` naming the serial and the depth, and never a
 generic timeout and never a retry.
@@ -88,8 +93,10 @@ __all__ = ["FOREIGN_SOURCE", "STALE_EPOCH", "UNMATCHED", "UdpTransport"]
 
 _PIPELINE_MEASUREMENT: Final = (
     "measured on FX5U-32MT/DS fw 1.065 over UDP entry No. 2 (PLC port 5001), "
-    "2026-09-06: bursts of 4E reads returned 8/8 and 32/32 with zero loss and 44/64 "
-    "at depth 64 -- twenty requests dropped with no end code, no ICMP and no error"
+    "2026-09-06 over Wi-Fi: bursts of 4E reads returned 8/8 and 32/32 with zero loss "
+    "and 44/64 at depth 64 -- twenty requests dropped with no end code, no ICMP and no "
+    "error. Wired on 2026-09-07 the ceiling was harder still: exactly 32 answered at "
+    "depth 48 and exactly 32 at depth 64"
 )
 
 STALE_EPOCH: Final = "stale-epoch"

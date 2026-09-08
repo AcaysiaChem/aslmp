@@ -95,12 +95,16 @@ DEFAULT_UDP_PIPELINE_DEPTH: Final = 8
 
 Depth 8 returned 8/8 and depth 32 returned 32/32 with zero loss; depth 64 returned
 44/64 -- twenty requests dropped by the PLC's receive path with no error anywhere
-(FX5U-32MT/DS fw 1.065, UDP entry No. 2 port 5001, 2026-09-06). Defaulting *at* the
-measured ceiling would put the loss cliff one firmware revision away.
+(FX5U-32MT/DS fw 1.065, UDP entry No. 2 port 5001, 2026-09-06, **from the laptop over
+Wi-Fi**). Re-measured 2026-09-07 from ``argus-bench`` over the **wired** link (UDP entry
+port 5005), depth 48 answered exactly 32 and depth 64 answered exactly 32: the queue is
+a hard 32, and the 44 was the CPU draining part of it while a slow burst was still
+arriving. Both readings put the ceiling at 32. Defaulting *at* it would put the loss
+cliff one firmware revision away.
 """
 
 MAX_UDP_PIPELINE_DEPTH: Final = 32
-"""The deepest burst measured lossless. Above it, requests vanish silently.
+"""The deepest burst measured lossless, on both links. Above it, requests vanish silently.
 
 Refused rather than warned about: the failure has no end code, no ICMP and no error of
 any kind, so a caller who exceeds it finds out from a transaction that never returns.
@@ -116,9 +120,16 @@ class TransportKind(enum.Enum):
     UDP entry over TCP fails by silence, and the only thing a retry in the other
     transport would prove is that the caller's configuration was already wrong.
 
-    ``TCP`` is the library default. UDP wins the median on our bench (p50 6.20 vs
-    7.41 ms) but TCP wins the tail (p99 10.49 vs 13.80, stdev 1.03 vs 1.79), and a
-    control loop is a jitter problem, not a mean-latency problem.
+    ``TCP`` is the library default for **configurability, not speed**. On the wired
+    retest (FX5U-32MT/DS fw 1.065, 2026-09-07, ``argus-bench`` 192.168.10.36, wired,
+    n=300 each interleaved, control drift 0.01 ms at p50) UDP was faster at every
+    percentile: p50 2.42 against 3.63 ms, p90 3.40 against 4.05, p99 3.56 against 4.69,
+    sd 0.40 against 0.36. An earlier Wi-Fi run had TCP winning the tail and that was
+    the reason recorded here; it was a property of the radio and did not reproduce on
+    wire. TCP stays the default because a UDP SLMP entry on iQ-F is point-to-point --
+    GX Works3 will not save one without a destination IP, and there are at most eight
+    entries -- while a TCP entry serves any peer, and because loss is silent on UDP.
+    See :data:`aslmp.client.TRANSPORT_CHOICE` and ``docs/hardware.md`` section 5.
     """
 
     TCP = "tcp"

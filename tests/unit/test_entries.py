@@ -1,15 +1,16 @@
 """Named handles per configured connection entry -- and the dispatch that is not there.
 
 The load-bearing assertion in this file is an **absence**. DESIGN.md graft G7 removed
-``EntryBank.lease()`` because a connection entry is not fungible capacity: our own five
-are four TCP and one UDP, and UDP on FX5U-32MT/DS fw 1.065 has both a different latency
-distribution (p50 6.20 ms against 7.41 ms) and a different failure mode (a lost datagram
-with no end code and no ICMP). A group that chose an entry for the caller would move a
-read between those two silently, and the only trace would be a latency number that had
-changed shape.
+``EntryBank.lease()`` because a connection entry is not fungible capacity: our own six
+are four TCP and two UDP, and UDP on FX5U-32MT/DS fw 1.065 has both a different latency
+distribution (p50 2.42 ms against 3.63 ms, wired, 2026-09-07) and a different failure mode
+(a lost datagram with no end code and no ICMP). A UDP entry is also point-to-point, so it
+is not even reachable from the same hosts. A group that chose an entry for the caller
+would move a read between those two silently, and the only trace would be a latency number
+that had changed shape.
 
 An absence cannot be defended by a docstring, so it is asserted here by reflection, next
-to a group built over the five entries the simulator serves -- including the UDP and the
+to a group built over the entries the simulator serves -- including the UDP and the
 ASCII ones -- so that "attribution survives" is demonstrated rather than claimed.
 """
 

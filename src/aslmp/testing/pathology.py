@@ -251,7 +251,8 @@ class Pathology:
 
     udp_drop_above_depth: int | None = None
     """Silently drop a datagram that arrives while this many are already unanswered
-    (:data:`UDP_PIPELINE_LOSS`). 32 was clean on the bench and 64 lost 31%."""
+    (:data:`UDP_PIPELINE_LOSS`). 32 was clean on the bench; 64 lost 31% over Wi-Fi
+    (2026-09-06) and everything past the 32nd request when measured wired (2026-09-07)."""
 
     udp_service_delay_s: float = 0.002
     """How long one datagram takes to service. Only observable when

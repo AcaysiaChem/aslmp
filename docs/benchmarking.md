@@ -1,14 +1,33 @@
 # Benchmarking
 
-## The rule
+## The two rules
 
-**No table without a same-session raw-socket control.**
+**No table without a same-session raw-socket control**, and **no number without its link.**
 
-`aslmp bench` enforces it (there is a `--no-control` flag whose only purpose is to be refused
-by name), and `bench/_report.py` raises `MissingControlError` if a report is assembled without
-one.
+`aslmp bench` enforces the first (there is a `--no-control` flag whose only purpose is to be
+refused by name), and `bench/_report.py` raises `MissingControlError` if a report is assembled
+without one. The second is enforced by nothing but discipline, which is why it is written here
+in the same size as the first: it is the one this project has already broken.
 
-This is not ceremony. The same machine, the same PLC and the same Wi-Fi link produced:
+## Why the second rule exists
+
+A control catches the day. It does not catch the medium.
+
+On 2026-09-06 we published that UDP won the median and **TCP won the tail** on our bench, and
+made that tail the stated reason `TransportKind.TCP` is the default. Every number in it was real
+and correctly taken. The bench was on Wi-Fi. On 2026-09-07 the same comparison from a wired host
+— interleaved TCP/UDP/TCP/UDP/TCP, with controls before and after that drifted 0.01 ms at p50 —
+put UDP ahead at **every** percentile including p99. The tail result was a property of the radio,
+where a lost datagram costs a full client timeout and TCP fast retransmits.
+
+The default did not change; its justification did, and the corrected reasoning is in
+[`hardware.md`](hardware.md) section 5 with both tables side by side. The lesson for this file
+is narrower and blunter: **a latency table that does not name its link is not reproducible, no
+matter how good its control is.** Name the host, the medium and the median RTT.
+
+## The first rule is not ceremony either
+
+The same machine, the same PLC and the same Wi-Fi link produced:
 
 | afternoon | p50 | p99 |
 | --- | --- | --- |
@@ -53,9 +72,17 @@ library rows and the control rows, so the columns are comparable.
 Nearest rank, no interpolation: an interpolated p99 of 300 samples reports a latency that was
 never observed, which is the wrong kind of number to publish about a machine.
 
-A mean would hide the only thing worth knowing. On our bench UDP wins the median (6.20 vs
-7.41 ms) and TCP wins the tail (p99 10.49 vs 13.80, stdev 1.03 vs 1.79). **For a control loop,
-only the second of those matters** — which is why `TransportKind.TCP` is the default.
+A mean would hide the only thing worth knowing, and the transport comparison is the case in
+point. On Wi-Fi the two transports split the columns — UDP took the median (6.20 against
+7.41 ms) and TCP took the tail (p99 10.49 against 13.80, sd 1.03 against 1.79) — and a mean
+would have reported one winner and lost the fact that a control loop cares about the second
+column. On wire there is no split at all: UDP takes p50, p90 and p99 (2.42/3.40/3.57 against
+3.63/4.05/4.69) at equal sd. Same client, same CPU, same command; two different shapes, and only
+percentiles show that they *are* different shapes.
+
+The default is still `TransportKind.TCP`, now for configurability rather than jitter — a UDP
+entry on iQ-F is point-to-point and there are eight entries in total. See
+[`hardware.md`](hardware.md) section 5.4.
 
 ## Running it
 
@@ -78,12 +105,24 @@ The scripts in `bench/` produce Markdown for pasting into an issue or a README:
 ```
 python bench/transports.py      --host HOST --profile KEY --tcp-port 5002 --udp-port 5001
 python bench/access_patterns.py --host HOST --profile KEY --port 5002
+python bench/soak.py            --host HOST --profile KEY --port 5002 --rate 50 --duration 300
 ```
 
 `transports.py` runs each transport with **its own** control — UDP's control is a different
-kernel path, so borrowing TCP's would compare two different things. `access_patterns.py` asks
-one control loop's four floats four ways: one `0x0403` random read, one contiguous `0x0401`, four
-separate `0x0401`s, and one `0x0406` block.
+kernel path, so borrowing TCP's would compare two different things. Point its `--udp-port` at an
+entry configured for *your* host: a UDP entry on iQ-F names one destination IP, so the port that
+works from one machine is silence from another. `access_patterns.py` asks one control loop's
+four floats four ways: one `0x0403` random read, one contiguous `0x0401`, four separate
+`0x0401`s, and one `0x0406` block.
+
+**`soak.py` is the one script here that writes to the PLC**, and it writes `D2` on every cycle
+for the whole run, because closing a real control loop is the only way to measure the path a
+controller depends on. It reads `D2` on the way in and restores it on the way out — in a
+`finally`, then on a fresh connection if the first one died, and by printing the exact `aslmp
+write` command that puts it back if both of those fail. It also asserts the CPU's own
+proportional-band arithmetic (`MV == clamp(Err * 12, 0, 100)`) on every cycle, so it fails a run
+whose latency table would have looked perfectly healthy. Do not point it at a PLC you are not
+allowed to write.
 
 ## Reading `access_patterns.py`, which is the interesting one
 
@@ -100,12 +139,22 @@ benchmark cannot talk you out of it.
 ## Published numbers in this repository
 
 The measured tables in [`hardware.md`](hardware.md) come from the raw-frame characterisation runs
-that produced the design, each with its own control, and they name the CPU, the firmware and the
-date.
+that produced the design, each with its own control, and they name the CPU, the firmware, the
+date and — since 2026-09-07 — the link and the host.
 
-**`bench/` has published nothing yet.** The scripts are written and exercised against the
-simulator; nobody has run them against the FX5U. When somebody does, the tables go in with the
-control rows attached, or they do not go in at all.
+**`bench/` has published one table**: the five-minute closed-loop soak in `hardware.md`
+section 16 — FX5U-32MT/DS fw 1.065, 2026-09-07, from `argus-bench` (192.168.10.36) over the
+**wired** link, TCP entry 5002 — which is the run `bench/soak.py` was promoted from. Read its
+absolute milliseconds as the weakest thing in that section. What a soak is actually evidence
+for is its counters (0 errors, 0 reconnects, 0 overruns in 30,005 transactions), its internal
+drift (p50 3.72 → 3.67 ms across the run, which is the honest way to read a long run without a
+second machine), and its per-cycle arithmetic assertion. The script brackets every run with the
+standard raw-socket control, so a rerun prints the link's drift beside the loop's.
+
+`transports.py` and `access_patterns.py` have still published nothing. They are exercised
+against the simulator, and the wired transport comparison in section 5 was taken with a
+standalone harness rather than through them. When somebody runs them against a CPU, the tables
+go in with the control rows and the link attached, or they do not go in at all.
 
 ## Measuring your own loop, without a benchmark
 

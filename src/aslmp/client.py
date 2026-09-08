@@ -189,9 +189,15 @@ effectively synchronous -- SD203 reported STOP on the first poll 3 times out of 
 18-21 ms after the command. Entering RUN is not: SD203 still reported STOP on the first
 poll in 2 cycles out of 3 and only reached RUN on the second, 25-33 ms after the command.
 A single immediate read therefore reports a false negative for RUN roughly two thirds of
-the time, which would make ``verify=True`` -- the safety default -- unusable. 250 ms is an
-order of magnitude above the worst transition seen, and it is a ceiling, not a wait: the
-loop returns the moment the state matches.
+the time, which would make ``verify=True`` -- the safety default -- unusable.
+
+Reproduced the same day from the laptop at 192.168.10.41 over **Wi-Fi**, TCP entry 5004,
+by ``tests/hardware/test_remote_control.py``: 3 RUNs of 3 needed a second observation and
+0 STOPs of 3 did. The link of the original three cycles was not recorded; see
+``docs/hardware.md`` section 15. Both runs agree on the asymmetry and on its order of
+magnitude, and it is the magnitude this constant rests on: 250 ms is an order of magnitude
+above the worst transition seen on either. It is a ceiling, not a wait -- the loop returns
+the moment the state matches, and ``RemoteResult.polls`` says how many reads that took.
 """
 
 REMOTE_POLL_INTERVAL_SECONDS: Final = 0.005
@@ -2144,8 +2150,9 @@ def _build_transport(
     ``udp_pipeline_depth`` is refused on TCP rather than ignored: silently accepting a
     number that cannot take effect is exactly the "wrong data reported as success" shape
     this library exists to refuse. On UDP it becomes the gate capacity. Measured on
-    FX5U-32MT/DS fw 1.065 (2026-09-06): 4E/UDP bursts are clean to depth 32 and lose ~31%
-    at 64 with no end code and no ICMP, which is why the ceiling is
+    FX5U-32MT/DS fw 1.065: 4E/UDP bursts are clean to depth 32 and lose above it with no
+    end code and no ICMP -- ~31% at 64 over Wi-Fi (2026-09-06), and everything past the
+    32nd request when re-measured wired (2026-09-07) -- which is why the ceiling is
     :data:`~aslmp.transport.base.MAX_UDP_PIPELINE_DEPTH` and the default is 1.
     """
     if kind is TransportKind.TCP:

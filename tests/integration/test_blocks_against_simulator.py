@@ -65,7 +65,11 @@ class Scratch:
 
 @contextlib.asynccontextmanager
 async def bench() -> AsyncIterator[PlcSimulator]:
-    """A simulator shaped like our bench: five entries, the measured pathology board."""
+    """A simulator shaped like our bench: five entries, the measured pathology board.
+
+    Five, not the six the real bench has grown -- UDP 5005 was added on 2026-09-07
+    for the wired retest and is peer-bound to a host the simulator has no notion of.
+    """
     simulator = PlcSimulator(target=FX5U_32MT_DS)
     await simulator.start()
     try:

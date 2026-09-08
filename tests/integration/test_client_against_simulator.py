@@ -65,7 +65,11 @@ FX5U_KEY = "melsec:iq-f/fx5u"
 async def bench(
     target: SimulatorTarget = FX5U_32MT_DS, **kwargs: object
 ) -> AsyncIterator[PlcSimulator]:
-    """A simulator shaped like our bench: five entries, the measured pathology board."""
+    """A simulator shaped like our bench: five entries, the measured pathology board.
+
+    Five, not the six the real bench has grown -- UDP 5005 was added on 2026-09-07
+    for the wired retest and is peer-bound to a host the simulator has no notion of.
+    """
     simulator = PlcSimulator(target=target, **kwargs)  # type: ignore[arg-type]  # kwargs
     await simulator.start()
     try:
@@ -773,7 +777,7 @@ async def test_a_broken_sink_is_counted_and_reported_once_per_generation() -> No
 
 
 async def test_the_same_client_works_over_udp() -> None:
-    """UDP wins the median and TCP wins the tail; both are one configured entry each.
+    """TCP and UDP are one configured entry each, and neither is a fallback for the other.
 
     UDP has no one-connection limit, but a 3E datagram carries no serial No., so the
     transport refuses an in-flight depth above 1 at construction. This asserts the

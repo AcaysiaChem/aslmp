@@ -1,9 +1,14 @@
 # What ships unverified
 
 Everything in this file is **implemented, gated, and reasoned from Mitsubishi documents rather
-than from hardware**. None of it has been sent to a real CPU by us. It is listed here, in
-`aslmp capabilities`, in each module's docstring, and in the profile as
-`Evidence(provenance=MANUAL)` or `INFERRED`.
+than from hardware**. It is listed here, in `aslmp capabilities`, in each module's docstring, and
+in the profile as `Evidence(provenance=MANUAL)` or `INFERRED`.
+
+One section — remote control — is now **partly** verified, and it is written up that way rather
+than moved out wholesale: three of the five commands have been sent to a real CPU, two have not,
+and the specific behaviour that justifies a safety default has not been reproduced. A section
+that goes from "all manual" to "mostly measured" is exactly where a reader stops checking, so
+each claim in it says which it is.
 
 The label is honest reporting. **It is not protection.** The conformance simulator gives every
 one of these paths CI coverage, but the simulator was written from the same manuals as the
@@ -70,33 +75,65 @@ Notably unverified there:
 - **The `0x4000`–`0x4FFF` CPU end codes.** The detail lives in SH(NA)-081264ENG, which we have
   not read. Those codes currently fall through to `SlmpCpuError` with a generic description.
 
-## Every remote-control command
+## Remote control — RUN, STOP and PAUSE are now measured; RESET is not
 
-`0x1001` Run, `0x1002` Stop, `0x1003` Pause, `0x1005` Latch Clear, `0x1006` Reset.
+**This section shrank on 2026-09-07.** `0x1001` Run, `0x1002` Stop and `0x1003` Pause have been
+sent to the real CPU and checked against its own free-running scan counter, and the numbers are
+in [`hardware.md`](hardware.md) section 15. The reason we had abstained — this CPU's memory-card
+error once left it declining a remote RUN and needing a physical power cycle — no longer holds:
+the card is out, and GX Works3 drove remote STOP and RUN repeatedly through the same session.
 
-**We deliberately never sent them.** This CPU's memory-card error once left it refusing a remote
-RUN and needing a physical power cycle, and a benchmark is not worth a machine that will not
-start.
+### Still unverified, and staying that way
 
-Consequences carried in the code:
+- **`0x1006` Remote Reset has never been sent.** It is the one command whose expected outcome is
+  an *absent* response, and the one that reboots the CPU. `reset()` returns a `ResetOutcome`
+  rather than raising on silence, and that whole path is simulator-tested only.
+- **`0x1005` Latch Clear has never been sent**, and clearing a latch range on a machine we
+  cannot see is not a measurement worth taking.
 
-- the whole surface is behind `Plc(allow_remote_control=True)`, and the CLI has no path to it at
-  all;
-- `verify=True` is the **default** on run/stop/pause, because Mitsubishi documents Remote RUN as
-  completing normally with the switch in STOP while the CPU does not run. Returning that
-  `0x0000` as success would be a silent lie, so the library reads SD203 back and raises
-  `SlmpRemoteStateNotReachedError` if the state was not reached. That second round trip is the
-  correct price;
-- `reset()` expects an **absent** response and returns a `ResetOutcome` rather than raising on
-  silence;
+### The claim that justifies the `verify=True` default is still a manual claim
+
+`verify=True` is the **default** on run/stop/pause because Mitsubishi documents Remote RUN as
+completing with end code `0x0000` while the switch is in STOP and the CPU does not run
+(SH(NA)-080956ENG-M p.131). Returning that `0x0000` as success would be a silent lie, so the
+library reads SD203 back and raises `SlmpRemoteStateNotReachedError` if the state was not
+reached.
+
+**We could not force that condition and therefore have not measured it.** The bench CPU's switch
+is in RUN, and with the switch there, Remote RUN is truthful: sent with `verify=False` it
+returned `0x0000` and the scan counter advanced. Reproducing the lie needs physical access to
+the switch, so it remains a claim we take from the manual and implement as if true.
+
+One corroboration that is **not** our measurement and must not be read as one: the reviewer who
+challenged these numbers independently saw **GX Works3 report "The RUN operation has been
+completed" while P.RUN stayed dark and the CPU never started scanning** — the same lie, through
+Mitsubishi's own tool. It raises our confidence in the manual's warning. It is somebody else's
+observation, taken through a GUI we did not instrument, with no frame capture and no end code
+written down, and it settles nothing.
+
+### The remote-control ambiguities, and what sending the commands did and did not settle
+
 - ambiguity `A-REMOTE-FIXED`: the `1002`/`1005`/`1006` two-byte fixed field is `01 00` in
-  SLMP-REF and `00 00` in JY997D56001. The iQ-F profile ships `00 00`, the SLMP-REF families ship
-  `01 00`, and neither has been sent;
+  SLMP-REF and `00 00` in JY997D56001. The iQ-F profile ships `00 00` and the SLMP-REF families
+  ship `01 00`. The iQ-F value **has now been sent and was accepted**, so `00 00` is known to
+  work on this CPU — but `01 00` was never sent, so we cannot tell *required* from *merely
+  accepted*, and the CPU may well ignore the field. **The row stays open**, because a
+  differential test is the only thing that closes it and we did not run one.
 - ambiguity `A-CLEAR-MODE`: JY997D56001 p.105 says only `00H` is valid and prints `02H` on the
-  same page. The iQ-F profile refuses anything but `NONE`.
+  same page. The iQ-F profile refuses anything but `NONE`. Every Remote RUN we sent carried
+  `00H`, so that value is measured; `01H` and `02H` remain unsent and refused.
 
-**Probe:** an FX5U in STOP with a scratch program. Send `1002` with `00 00`, record the end code,
-repeat with `01 00`.
+**Probe for both:** an FX5U with a scratch program. Send `1002` with `00 00`, record the end
+code, repeat with `01 00`; send `1001` with clear mode `01H` and `02H` and check whether devices
+actually cleared.
+
+### And the gate stays exactly where it was
+
+Nothing above widens the surface. The whole of it is still behind
+`Plc(allow_remote_control=True)`, the CLI still has no path to it, and
+`tests/unit/test_tools.py` still proves that by walking the AST of every `aslmp/tools` module.
+Three verified commands do not make a fourth safe, and they do not make any of them safe to
+reach from a shell history.
 
 ## `0x0406` / `0x1406` block access
 
@@ -131,9 +168,16 @@ is the largest single correctness win available to this design.
 
 ## Everything, at n=1
 
-Even the measured half of this library is one CPU, one firmware, one entry, one Wi-Fi link, two
-afternoons. A firmware update could invalidate the coalescing behaviour, the accept-then-FIN, the
-`0xC05C` mapping or 4E acceptance, and **nothing here would tell us.**
+Even the measured half of this library is one CPU, one firmware, two hosts and two afternoons.
+A firmware update could invalidate the coalescing behaviour, the accept-then-FIN, the `0xC05C`
+mapping or 4E acceptance, and **nothing here would tell us.**
+
+It is n=1 in a second dimension too, and that one has already bitten us. Until 2026-09-07 every
+latency number here came from **one Wi-Fi link**, and the transport conclusion drawn from it —
+"TCP wins the tail" — did not survive a wired retest ([`hardware.md`](hardware.md) section 5).
+The default did not change, but its published justification was wrong for a day. Assume the same
+about anything here that a second link has not seen: the entry-release window, the queue depth's
+exact shape, and every absolute millisecond in this repository.
 
 If you run this against a CPU we have not seen, `aslmp verify-ranges`, `aslmp capabilities` and
 `aslmp.testing.run_conformance` produce exactly the artifact that would fix a row in this file.
