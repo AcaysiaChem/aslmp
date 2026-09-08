@@ -138,8 +138,9 @@ get `bench/transports.py` to run against this CPU. Registered as `A-ENTRY-RELEAS
 
 `0x0619` Self Test with payload `b"0619"` + four hex digits of a per-generation nonce, echo
 compared **byte for byte**. On the bench a `0x0619` costs the same as a 2-word read — **Wi-Fi,
-2026-09-06**, so read the columns against each other and not as absolute costs (the same reads
-are 2.42–3.63 ms at p50 on wire, section 5):
+2026-09-06**, from the laptop at 192.168.10.41 at ~7 ms median RTT, so read the columns against
+each other and not as absolute costs (the same reads are 2.42–3.63 ms at p50 on wire, from
+`argus-bench` at 192.168.10.36, section 5):
 
 | probe | n | min | p50 | p90 | p99 | max | stdev |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -149,7 +150,7 @@ are 2.42–3.63 ms at p50 on wire, section 5):
 
 The loopback touches no device memory and costs the same as a read, so **essentially the whole
 ~7 ms is transport plus the SLMP module's service processing**, not device access. And 958 extra
-words cost about 2.3 ms at p50.
+words cost about 2.3 ms at p50 on that Wi-Fi link.
 
 Two consequences: `0x0619` is the right zero-side-effect liveness probe, and **round trips are
 expensive while batching is nearly free** — 960 words in one transaction (9.2 ms) against 480
@@ -220,7 +221,8 @@ TCP/UDP/TCP/UDP/TCP** so that any drift over the run lands on both transports, f
 | TCP control (after) | 300 | 2.51 | 3.63 | 4.19 | 4.71 | 4.78 | 0.39 |
 
 **Control drift across the whole run: 0.01 ms at p50** — the error bar on everything above is
-smaller than any difference in the table. UDP wins p50 by 1.21 ms, p90 by 0.65 ms and **p99 by
+smaller than any difference in the table. On `argus-bench` (192.168.10.36) over the **wired**
+link, UDP wins p50 by 1.21 ms, p90 by 0.65 ms and **p99 by
 1.13 ms**, at essentially equal standard deviation (0.40 against 0.36). The UDP row repeats to
 within 0.01 ms at p50 and 0.02 ms at p90.
 
@@ -271,6 +273,7 @@ ms : 5   6   7    8    9   10  11  12  13  14  15  16  17  18  22
 n  : 1  30  122  158  80  53  33   6   5   4   2   2   1   2   1
 ```
 
+From the laptop at 192.168.10.41 over **Wi-Fi** (~7 ms median RTT), 2026-09-06:
 p50 8.46, p90 11.10, p99 16.22, max 22.17, stdev 1.86. Unimodal with a long right tail, and no
 bimodal 40 ms Nagle cluster. The **0.98 ms** scan period (section 17) is not visible as
 quantisation. That period was printed as ~0.97 ms here until 2026-09-07, when it was
@@ -278,7 +281,8 @@ re-derived from the corrected scan rate; the conclusion is unchanged, because a 
 quantisation would be visible in these buckets at either figure.
 
 **This is not the 500-read run quoted in `aslmp.observability`.** That module's docstring
-carries a *different* 500-sample run from the same afternoon and the same link — min 4.568 /
+carries a *different* 500-sample run from the same afternoon and the same link (the laptop at
+192.168.10.41 over **Wi-Fi**) — min 4.568 /
 p50 7.338 / p90 9.710 / p99 12.986 / max 38.477 ms, `TCP_NODELAY` on — and the two are 1.1 ms
 apart at p50 because they are two runs, not two views of one. Neither is a correction of the
 other; both are what this rig did on 2026-09-06 over Wi-Fi, and the gap between them is the
@@ -614,6 +618,8 @@ which this table cannot.
 | entry-busy / concurrent rejections | 0 / 0 |
 | PLC scan rate under this load | **969/s**, against this session's own idle reference of **1029/s** (see below) |
 
+The same run, from `argus-bench` (192.168.10.36) over the **wired** link at 3.64 ms median RTT:
+
 | ms | p50 | p90 | p99 | p99.9 | max | sd |
 | --- | --- | --- | --- | --- | --- | --- |
 | block read (`0x0403`, 5 values) | 3.67 | 4.23 | 4.69 | 5.52 | 6.72 | 0.48 |
@@ -662,8 +668,9 @@ the point of printing both.
 cycles, 0 reconnects, 0 entry-busy, 0 concurrent rejections, 0 timeouts**; **53 cadence
 overruns**, all of them cycles whose tail did not fit a 40 ms period on a radio; PLC at 997
 scans/s under this load against 1018 idle — the same idle figure as section 17, taken in this
-run, and a 2.1 % cost at half the cadence of the wired run above. Control drift 7.56 → 7.74 ms
-at p50 (0.18 ms) — an error bar eighteen times the wired run's, which is what a radio costs you. The soak's own drift
+run, and a 2.1 % cost at half the cadence of the wired run above. On the laptop at
+192.168.10.41 over **Wi-Fi**, control drift 7.56 → 7.74 ms at p50 (0.18 ms) — an error bar
+eighteen times the wired run's, which is what a radio costs you. The soak's own drift
 was +0.86 ms across the run, larger than the control's and not distinguishable from it at this
 length.
 
@@ -733,16 +740,29 @@ produced it by a day, in a table, in the README, where it looked like a specific
 ### The measurement
 
 `D8` is `IO_Scan`, a **`REAL`** — the PLC's own ST does `IO_Scan := IO_Scan + 1.0` once per
-scan and wraps above `1.0E7`. Read as the `f32` it is:
+scan and wraps above `1.0E7`. Read as the `f32` it is, on 2026-09-07, from both hosts:
 
-| window | counts | seconds | scans/s |
-| --- | --- | --- | --- |
-| 20 s | **20,374** | 20.014 | **1018.0** |
-| 1 s, 5 s, 10 s | — | — | 1018, agreeing to 0.4 % |
+| window | counts | seconds | scans/s | host | link |
+| --- | --- | --- | --- | --- | --- |
+| 20 s | **20,374** | 20.014 | **1018.0** | `argus-bench`, 192.168.10.36 | **wired**, 3.64 ms median RTT |
+| 20 s | — | — | **1018.4** | the laptop, 192.168.10.41 | **Wi-Fi**, ~7 ms median RTT |
+| 1 s, 5 s, 10 s | — | — | 1018, agreeing to 0.4 % | the laptop, 192.168.10.41 | **Wi-Fi**, ~7 ms median RTT |
 
-FX5U-32MT/DS fw 1.065 at 192.168.10.250, in RUN with no physical I/O wired, 2026-09-07, from
-the laptop at 192.168.10.41 over Wi-Fi. **1018 scans/s, 982.3 µs per scan**, and that is the
-one figure this repository publishes for it.
+FX5U-32MT/DS fw 1.065 at 192.168.10.250, in RUN with no physical I/O wired, 2026-09-07.
+
+> **The published idle scan rate is 1018 scans/s, 982 µs per scan.**
+
+That is the whole of it. 1018.0 wired and 1018.4 over Wi-Fi are **0.04 % apart**, which is
+what a scan rate should do across links, and 982.3 µs is `1e6 / 1018.0` rather than a second
+measurement. Every other scan figure anywhere in this repository is either that number, or
+arithmetic on it, or a *pair* taken inside one run — and each place that carries one cites
+this section by name.
+
+The first row of that table used to say the laptop over Wi-Fi. It was `argus-bench` on the
+wired link; the laptop's own 20 s window is the second row. Nothing about the figure moves —
+which is exactly why the mislabel survived — but a condition written down wrong is the same
+class of defect as a number written down wrong, and this file's own rule is that a table names
+its host and its link.
 
 A scan rate is nearly the only number in this file a link cannot move: it is a counter delta
 over a wall-clock window of seconds, so a few milliseconds of RTT at each end of a 20 s window
@@ -774,21 +794,52 @@ land in prose where no type checker, no end code and no test can reach them.
 | this file, header | ~1029 scans/s idle | 1018 scans/s idle, 982 µs per scan | one published figure, with its conditions |
 | this file, §5.5 | ~0.97 ms scan period | 0.98 ms | 1/1018; the conclusion it supports is unchanged |
 | this file, §15 | ~1029/s | ~1018/s | D8 is used there as moving-or-not; the rate is only quoted |
-| this file, §16 and README, the soak | 969/s against 1029/s idle, "about 6 %" | unchanged pair, "about 5–6 %" | 1029/s is that session's own reference and stays with its run; the percentage now carries the disagreement between the two idle figures |
-| `bench/soak.py`, `tests/hardware/*`, `aslmp.testing` | ~1024 and ~1029 in prose | not touched by this sweep | they are outside the sweep's ownership; each is a docstring quoting an idle rate, and each should be reconciled to 1018 when its file is next opened |
+| this file, §16 and README, the soak | 969/s against 1029/s idle, "about 6 %" | unchanged pair, "about 5–6 %" | 1029/s is that run's own reference and stays with its run; the percentage now carries the disagreement between it and the published figure |
+| this file, §17, the 20 s row | laptop over Wi-Fi | `argus-bench`, wired — with the laptop's own 20 s window (1018.4) beside it | the conditions were wrong, not the number; a table that names the wrong host is not labelled |
+| `bench/soak.py` | 969/s against 1029/s idle, unlabelled | the same pair, named as that run's own reference, citing §17 | it is the loaded half of a ratio and may not be split from its idle half |
+| `tests/hardware/test_remote_control.py` | ~1029 scans/s idle, twice | 1018, citing §17 | an idle rate quoted with no pair to belong to |
+| `tests/hardware/test_fx5u.py` | "the documented ~1024", and `expected = 1024 * 2.0` | `IDLE_SCAN_RATE_HZ = 1018.0` citing §17, and `IDLE_SCAN_RATE_HZ * SCAN_SAMPLE_WINDOW_S` | ~1024 was never measured; the literal was also the only one the *code* depended on |
+| `aslmp.testing`, `aslmp.client` | already 1018 | unchanged | they were reconciled when the misread was traced |
+
+Nothing on that list is "not touched by this sweep" any more. The previous revision of this
+table said `bench/soak.py`, `tests/hardware/*` and `aslmp.testing` were outside its ownership
+and "should be reconciled when the file is next opened", which is the disclosure-instead-of-fix
+that this project keeps getting caught doing. They are reconciled, and the sweep is now a test
+rather than a promise — see below.
+
+### The number lives in one place, and a test says so
+
+`tests/unit/test_citations.py` reads the 20 s row of the table above, divides counts by
+seconds, and checks the quotient against the published rate. Everything else is then held
+against that one derived value:
+
+- every scan-rate literal in `README.md`, `CHANGELOG.md`, `docs/`, `bench/`,
+  `tests/hardware/` and `src/aslmp/` must be the published figure — or the loaded/idle pair
+  of a single run, which may not appear split from its partner;
+- `~1024`, `~1029` alone, and `61.6 µs` are refused outright, by name, because each was
+  published once;
+- every scan period in prose must equal `1e6 / 1018.0` to the precision it is quoted at;
+- any constant named `*_SCAN_RATE_*` must equal the measurement outright, because it has no
+  unit beside it for a text scan to find and it is the only copy of this number that anything
+  *executes* — `expected = 1024 * 2.0` was exactly that;
+- every file that carries a scan figure must also cite this section, so that "where did this
+  number come from" is answerable without asking anyone.
+
+The test fails on a *sibling* left behind, which is the failure mode this section documents.
 
 ### Why the figures ever disagreed
 
 The repository has carried ~1024, ~1029 and 1018 for the same quantity. They are 1.1 % apart at
 the extremes, which is far too small to be the `U32` misread (that one is 16x) and is
 consistent with short windows, different sessions and a CPU whose scan rate is not a constant
-of nature. The 20 s window above is the longest we have taken and it agrees with the 1 s, 5 s
-and 10 s windows of the same session to 0.4 %.
+of nature. The 20 s window above is the longest we have taken; it agrees with the 1 s, 5 s and
+10 s windows of the same session to 0.4 %, and with the other host to 0.04 %.
 
 What would settle it properly, and has not been done: sample `D8` as `f32` over a 60 s window on
-each of two sessions on two days, from both hosts, and record all four. Until then **1018 with
-the conditions above** is the figure, and a percentage derived from a *pair* of scan rates
-should quote the pair it came from rather than mixing sessions.
+each of two sessions on two days, from both hosts, and record all four. Two of those four exist
+(the first two rows above) and they agree; the second day does not. Until then **1018 with the
+conditions above** is the figure, and a percentage derived from a *pair* of scan rates should
+quote the pair it came from rather than mixing sessions.
 
 ## Reproducing any of this
 

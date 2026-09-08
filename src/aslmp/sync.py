@@ -566,12 +566,12 @@ class Plc:
     def read_str(
         self, address: AddressLike, /, *, length: int, encoding: str = "ascii"
     ) -> str:
-        """``length`` characters packed two per register, trimmed at the first NUL.
+        """``length`` **bytes** packed two per register, trimmed at the first NUL.
 
-        ``length`` is required and is in characters. A string region has no in-band
-        length, so the alternatives to naming it are reading a fixed maximum -- which
-        returns the next field's bytes -- or scanning for a NUL, which is a second round
-        trip whose answer can change between the two.
+        ``length`` is required and is a count of BYTES, not of characters -- see
+        :meth:`aslmp.client.Plc.read_str`, where the wrong word cut a ``shift_jis``
+        character in half. An undecodable window and an unknown codec both raise inside
+        the DESIGN section 3.1 tree, exactly as :meth:`write_str` has always done.
         """
         return self._runtime.submit(
             self._plc.read_str(address, length=length, encoding=encoding)
@@ -584,16 +584,48 @@ class Plc:
         self._runtime.submit(self._plc.write_bit(address, value, verify=verify))
 
     def write_i16(
-        self, address: AddressLike, value: int, /, *, verify: bool = False
+        self,
+        address: AddressLike,
+        value: int,
+        /,
+        *,
+        minimum: float | None = None,
+        maximum: float | None = None,
+        verify: bool = False,
     ) -> None:
-        """One register from a signed 16-bit integer. Never masked, never clamped."""
-        self._runtime.submit(self._plc.write_i16(address, value, verify=verify))
+        """One register from a signed 16-bit integer. Never masked, never clamped.
+
+        ``minimum``/``maximum`` are the same declared range :meth:`read_i16` holds a
+        reading to, enforced before anything is sent
+        (:meth:`aslmp.client.Plc.write_i16`).
+        """
+        self._runtime.submit(
+            self._plc.write_i16(
+                address, value, minimum=minimum, maximum=maximum, verify=verify
+            )
+        )
 
     def write_u16(
-        self, address: AddressLike, value: int, /, *, verify: bool = False
+        self,
+        address: AddressLike,
+        value: int,
+        /,
+        *,
+        minimum: float | None = None,
+        maximum: float | None = None,
+        verify: bool = False,
     ) -> None:
-        """One register from an unsigned 16-bit integer."""
-        self._runtime.submit(self._plc.write_u16(address, value, verify=verify))
+        """One register from an unsigned 16-bit integer.
+
+        ``minimum``/``maximum`` are the same declared range :meth:`read_u16` holds a
+        reading to, enforced before anything is sent
+        (:meth:`aslmp.client.Plc.write_u16`).
+        """
+        self._runtime.submit(
+            self._plc.write_u16(
+                address, value, minimum=minimum, maximum=maximum, verify=verify
+            )
+        )
 
     def write_i32(
         self,
@@ -602,11 +634,25 @@ class Plc:
         /,
         *,
         word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
         verify: bool = False,
     ) -> None:
-        """Two registers from a signed 32-bit integer."""
+        """Two registers from a signed 32-bit integer.
+
+        ``minimum``/``maximum`` are the same declared range :meth:`read_i32` holds a
+        reading to, enforced before anything is sent
+        (:meth:`aslmp.client.Plc.write_i32`).
+        """
         self._runtime.submit(
-            self._plc.write_i32(address, value, word_order=word_order, verify=verify)
+            self._plc.write_i32(
+                address,
+                value,
+                word_order=word_order,
+                minimum=minimum,
+                maximum=maximum,
+                verify=verify,
+            )
         )
 
     def write_u32(
@@ -616,11 +662,25 @@ class Plc:
         /,
         *,
         word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
         verify: bool = False,
     ) -> None:
-        """Two registers from an unsigned 32-bit integer."""
+        """Two registers from an unsigned 32-bit integer.
+
+        ``minimum``/``maximum`` are the same declared range :meth:`read_u32` holds a
+        reading to, enforced before anything is sent
+        (:meth:`aslmp.client.Plc.write_u32`).
+        """
         self._runtime.submit(
-            self._plc.write_u32(address, value, word_order=word_order, verify=verify)
+            self._plc.write_u32(
+                address,
+                value,
+                word_order=word_order,
+                minimum=minimum,
+                maximum=maximum,
+                verify=verify,
+            )
         )
 
     def write_f32(
@@ -630,11 +690,25 @@ class Plc:
         /,
         *,
         word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
         verify: bool = False,
     ) -> None:
-        """Two registers from one IEEE-754 single, low word first."""
+        """Two registers from one IEEE-754 single, low word first.
+
+        ``minimum``/``maximum`` are the same declared range :meth:`read_f32` holds a
+        reading to, enforced before anything is sent
+        (:meth:`aslmp.client.Plc.write_f32`).
+        """
         self._runtime.submit(
-            self._plc.write_f32(address, value, word_order=word_order, verify=verify)
+            self._plc.write_f32(
+                address,
+                value,
+                word_order=word_order,
+                minimum=minimum,
+                maximum=maximum,
+                verify=verify,
+            )
         )
 
     def write_f64(
@@ -644,11 +718,25 @@ class Plc:
         /,
         *,
         word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
         verify: bool = False,
     ) -> None:
-        """Four registers from one IEEE-754 double."""
+        """Four registers from one IEEE-754 double.
+
+        ``minimum``/``maximum`` are the same declared range :meth:`read_f64` holds a
+        reading to, enforced before anything is sent
+        (:meth:`aslmp.client.Plc.write_f64`).
+        """
         self._runtime.submit(
-            self._plc.write_f64(address, value, word_order=word_order, verify=verify)
+            self._plc.write_f64(
+                address,
+                value,
+                word_order=word_order,
+                minimum=minimum,
+                maximum=maximum,
+                verify=verify,
+            )
         )
 
     def write_str(
@@ -661,10 +749,12 @@ class Plc:
         encoding: str = "ascii",
         verify: bool = False,
     ) -> None:
-        """``length`` characters, NUL padded, two per register.
+        """``length`` **bytes**, NUL padded, two per register.
 
-        A string longer than ``length`` raises rather than being truncated to fit: a
-        silently shortened part number is a wrong part number.
+        ``length`` is a count of BYTES, not of characters, and always was -- named for
+        that now on both halves of the pair. A string longer than ``length`` raises
+        rather than being truncated to fit: a silently shortened part number is a wrong
+        part number.
         """
         self._runtime.submit(
             self._plc.write_str(address, value, length=length, encoding=encoding, verify=verify)

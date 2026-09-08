@@ -207,24 +207,36 @@ _WRITE_KINDS: frozenset[str] = frozenset({"u16", "i16", "u32", "i32", "f32"})
 _POINT_DOMAINS: Final[Mapping[PointKind, bool | None]] = {
     "i16": True,
     "i32": True,
-    "u16": None,
-    "u32": None,
+    "u16": False,
+    "u32": False,
     "f32": None,
     "bits": None,
 }
 """The integer domain each ``kind`` names, in :func:`~aslmp.commands.base.unsigned`'s
 vocabulary. One table, read by :attr:`RandomPoint.signed_field`.
 
-``i16``/``i32`` name a signed type and are enforced as one. ``u16``/``u32`` are the kinds
-:meth:`RandomPoint.__str__` prints with **no suffix at all**, because they are what a
-register is when nobody has said otherwise: the union of the two renderings stays legal
-there, exactly as it does for :meth:`~aslmp.client.Plc.write_words`. ``f32`` and ``bits``
-are ``None`` because they never reach ``unsigned()`` -- an f32 point is checked by
-:func:`~aslmp.commands.base.real` and packed through ``struct``, and a ``bits`` point
-cannot be written by ``1402`` in word units at all (:class:`RandomWrite` refuses it at
-construction). They are in the table rather than absent so that a lookup here is a total
-function: a ``.get()`` with a permissive fallback is how a new kind would silently
-inherit the union."""
+``i16``/``i32`` name a signed type and are enforced as one. ``u16``/``u32`` name an
+unsigned one and are enforced as one **as of this revision**: they were ``None`` -- the
+union of both renderings -- on the argument that they are what a register is when nobody
+has said otherwise. That argument is wrong for one specific reason, and the reason is
+measured. :meth:`~aslmp.client.Plc.write_u16` refuses ``-1``, and
+``RandomWrite(word('D101', kind='u16'), -1)`` masked it to ``0xFFFF`` and
+:meth:`~aslmp.client.Plc.write_random` sent it: ``D101`` read back 65535 on
+FX5U-32MT/DS fw 1.065 from this host over TCP 5002, 2026-09-07. Two doors onto the same
+register, named the same type, disagreeing about that type's domain. ``u16`` here now
+means what ``u16`` means everywhere else in this package -- including the ``U16`` and
+``Word`` block fields, which have always refused ``-1`` through
+:func:`aslmp.blocks.plan._in_width`. The raw-register door, where ``-1`` and ``65535``
+are the same sixteen bits, is :meth:`~aslmp.client.Plc.write_words` and
+:class:`~aslmp.commands.block.BlockWrite`; write ``-1`` through a *named* type as
+``i16``/``i32``, which is the type it is.
+
+``f32`` and ``bits`` are ``None`` because they never reach ``unsigned()`` -- an f32 point
+is checked by :func:`~aslmp.commands.base.real` and packed through ``struct``, and a
+``bits`` point cannot be written by ``1402`` in word units at all (:class:`RandomWrite`
+refuses it at construction). They are in the table rather than absent so that a lookup
+here is a total function: a ``.get()`` with a permissive fallback is how a new kind would
+silently inherit the union."""
 
 
 class AccessWidth(enum.Enum):
@@ -299,11 +311,13 @@ class RandomPoint:
 
         A point carries its own type, so a write through it is a write to a *named*
         type, not to a raw register -- which is the whole of the fix in
-        :meth:`RandomWrite.wire_value`.
+        :meth:`RandomWrite.wire_value`, and, for ``u16``/``u32``, of the one after it.
         """
         return _POINT_DOMAINS[self.kind]
 
     def __str__(self) -> str:
+        # u16/u32 print bare because they are the default kind for their width, not
+        # because they are untyped: they are enforced as unsigned (_POINT_DOMAINS).
         suffix = "" if self.kind in ("u16", "u32") else f":{self.kind}"
         return f"{self.address}{suffix}"
 
@@ -597,6 +611,15 @@ class RandomWrite:
         :meth:`~aslmp.client.Plc.write_random` refused it one layer up, so the masking
         only ever ran for a caller who had built the command directly; a refusal that
         depends on which door you came through is not a refusal.
+
+        The sibling that fix left behind: ``u16`` and ``u32`` were still declared as *no*
+        domain, so ``RandomWrite(word('D101', kind='u16'), -1)`` masked to ``0xFFFF``
+        through both doors while :meth:`~aslmp.client.Plc.write_u16` refused it -- and
+        ``D101`` read back 65535 on the bench (FX5U-32MT/DS fw 1.065 from this host over
+        TCP 5002, 2026-09-07). :data:`_POINT_DOMAINS` now names all four integer kinds,
+        and ``tests/unit/test_read_write_symmetry.py`` asserts that every point kind and
+        the ``Plc.write_<kind>`` of the same name accept and refuse exactly the same
+        values.
         """
         bits = self.point.width.bits
         if self.point.kind == "f32":

@@ -107,7 +107,10 @@ term is the one place the "ASCII is twice binary" rule breaks.
 pure and incremental, so TCP segmentation is deterministic in CI: every golden frame is fed one
 byte at a time, split exactly at 1460, and through 200 seeded random splits, and all must yield
 an identical `RawResponse`. Stamping the *first* chunk would report 11.0 ms for a 14.0 ms
-transaction.
+transaction — illustrative arithmetic, not a measurement: those two numbers name no host and no
+link because there is no run behind them. The measured fact underneath is that 1 of 3 identical
+1931-byte reads split at the 1460-byte MSS (2026-09-06, laptop at 192.168.10.41 over Wi-Fi,
+~7 ms median RTT), so the gap between a first-chunk stamp and a last-chunk stamp is real.
 
 **Nothing in the library calls `logging`.** Observability is typed events and transaction
 records; `observability.attach_logging()` is the single bridge, and an AST test asserts the
@@ -138,8 +141,10 @@ removals in a minor.
   *declared constants* a caller overrides; a default is not a probe.
 - **No `OverrunPolicy.SKIP`.** Silently dropping a cycle to catch up is the scheduling
   equivalent of returning a stale value.
-- **No mutable blocks and no `read_*_into`.** They buy a rounding error against a 7 ms transport
-  in exchange for a mutable-aliasing hazard.
+- **No mutable blocks and no `read_*_into`.** They buy a rounding error against a transport
+  that costs ~7 ms from the laptop at 192.168.10.41 over Wi-Fi and ~3.6 ms from `argus-bench`
+  at 192.168.10.36 on wire, in exchange for a mutable-aliasing hazard. The argument does not
+  turn on which link you are on, which is why both are named.
 - **No `read_block(type[B])` door.** `bind()` returns a `BlockPlan[B]` and `read_block` accepts
   nothing else, so the unvalidated revalidate-every-cycle path is not the shortest thing to type
   in a hot loop.

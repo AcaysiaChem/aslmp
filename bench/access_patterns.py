@@ -17,7 +17,9 @@ value, output, error. There are four ways to fetch them and they are not equival
     contiguous. Move one field and this becomes several reads.
 ``0x0401`` batch read, four separate reads
     Four round trips, and the values are up to four round trips apart. On our bench a
-    split like this sampled the plant up to 27 ms apart. This row exists to show what
+    split like this sampled the plant up to 27 ms apart -- FX5U-32MT/DS fw 1.065 at
+    192.168.10.250, 2026-09-06, from the laptop at 192.168.10.41 over Wi-Fi at ~7 ms
+    median RTT, which is the link that number belongs to. This row exists to show what
     the atomicity is worth in milliseconds.
 ``0x0406`` block read
     Never exercised on our bench -- it is one of the paths shipped labelled unverified.

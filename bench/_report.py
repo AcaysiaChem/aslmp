@@ -3,10 +3,13 @@
 **The one rule this module enforces: no table without a control.**
 :func:`report` raises :class:`MissingControlError` unless it is handed at least one
 distribution measured through a raw socket in the same session. That is not a style
-preference. The same machine, the same PLC and the same Wi-Fi link produced p50 7.1 /
-p99 18.8 ms on one afternoon and p50 10.3 / p99 95.2 ms on another, with nothing changed
-but the day. A library latency number with no control beside it does not say what the
-library costs; it says what the link was doing while the library ran.
+preference. The laptop at 192.168.10.41 over Wi-Fi (~7 ms median RTT), against
+FX5U-32MT/DS fw 1.065 at 192.168.10.250, produced p50 7.1 / p99 18.8 ms on one
+afternoon and p50 10.3 / p99 95.2 ms on another, with nothing changed but the day.
+(The two dates were not written down at the time; ``docs/benchmarking.md`` prints that
+gap as a defect in the record rather than filling it in.) A library latency number with
+no control beside it does not say what the library costs; it says what the link was doing
+while the library ran.
 
 **Two controls, one before and one after.** The drift between them is the honest error
 bar on everything in between, and it is usually larger than the thing being measured.

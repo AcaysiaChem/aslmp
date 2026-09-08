@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import struct
+from typing import Final
 
 import pytest
 
@@ -21,6 +22,7 @@ from aslmp.commands.registry import COMMANDS
 from aslmp.profile import Encoding
 from aslmp.testing.dispatch import (
     HANDLERS,
+    CpuRunState,
     Dispatcher,
     Reply,
     Silence,
@@ -529,18 +531,163 @@ def test_remote_run_refuses_a_clear_mode_an_iq_f_does_not_have() -> None:
     ).end_code == 0xC059
 
 
+REMOTE_RUN_PAYLOAD: Final = (
+    BINARY.number(1, bits=16) + BINARY.number(0, bits=8) + BINARY.number(0, bits=8)
+)
+"""``1001`` mode 1, clear mode 0, one reserved byte -- the request an iQ-F accepts."""
+
+REMOTE_STOP_PAYLOAD: Final = BINARY.number(0x0000, bits=16)
+"""``1002``'s fixed field as an iQ-F writes it."""
+
+
+def read_sd203(plc: Dispatcher) -> int:
+    """``SD203`` the way a client gets it: a ``0401`` for one word, decoded off the wire.
+
+    Never ``plc.state``. This file's remote-control section used to reach into the session
+    object, which is how a Remote STOP that no client could observe passed three review
+    rounds.
+    """
+    code = DEVICE_TABLE["SD"].code_short
+    assert code is not None, "SD has a short device code in the generated table"
+    payload = _batch_read(BINARY, (203).to_bytes(3, "little") + bytes((code,)), 1)
+    out = reply(
+        serve(
+            plc.target,
+            make_request(BINARY, command=0x0401, payload=payload),
+            dispatcher=plc,
+        )
+    )
+    assert out.end_code == 0x0000, f"reading SD203 was refused 0x{out.end_code:04X}"
+    return BINARY.read_words(out.payload, 0, 1)[0]
+
+
+def test_a_remote_stop_is_visible_to_a_client_in_sd203() -> None:
+    """The whole point: the handler's effect leaves the simulator through a register.
+
+    Until 2026-09-07 ``1002`` wrote ``SessionState.run_state``, ``SD203`` was never
+    derived from it, and a client that had just been answered ``0x0000`` still read RUN --
+    so every verified-remote test in this suite set ``SD203`` by hand beforehand and
+    would have passed against a handler that did nothing at all.
+    """
+    plc = Dispatcher(target=FX5U_32MT_DS, memory=FX5U_32MT_DS.memory())
+    assert read_sd203(plc) == CpuRunState.RUN
+
+    out = reply(
+        serve(
+            FX5U_32MT_DS,
+            make_request(BINARY, command=0x1002, payload=REMOTE_STOP_PAYLOAD),
+            dispatcher=plc,
+        )
+    )
+    assert out.end_code == 0x0000
+    assert read_sd203(plc) == CpuRunState.STOP
+
+    out = reply(
+        serve(
+            FX5U_32MT_DS,
+            make_request(BINARY, command=0x1001, payload=REMOTE_RUN_PAYLOAD),
+            dispatcher=plc,
+        )
+    )
+    assert out.end_code == 0x0000
+    assert read_sd203(plc) == CpuRunState.RUN
+
+
+def test_remote_pause_is_visible_too() -> None:
+    """``1003`` is the third handler that wrote the field nobody could read."""
+    plc = Dispatcher(target=FX5U_32MT_DS, memory=FX5U_32MT_DS.memory())
+    assert reply(
+        serve(
+            FX5U_32MT_DS,
+            make_request(BINARY, command=0x1003, payload=BINARY.number(1, bits=16)),
+            dispatcher=plc,
+        )
+    ).end_code == 0x0000
+    assert read_sd203(plc) == CpuRunState.PAUSE
+
+
+def test_the_key_switch_in_stop_completes_a_remote_run_that_did_not_run() -> None:
+    """SH(NA)-080956ENG-M 6.9, p.131, modelled rather than asserted about.
+
+    "Will be completed normally. However, the access destination does not become the RUN
+    state." End code ``0x0000`` and ``SD203`` still STOP: the exact shape ``verify=True``
+    exists to catch, produced by an honest CPU with its key turned, not by a pathology.
+    """
+    plc = Dispatcher(target=FX5U_32MT_DS, memory=FX5U_32MT_DS.memory())
+    plc.state.switch_position = CpuRunState.STOP
+
+    assert read_sd203(plc) == CpuRunState.STOP, "the key alone stops the CPU"
+    assert reply(
+        serve(
+            FX5U_32MT_DS,
+            make_request(BINARY, command=0x1001, payload=REMOTE_RUN_PAYLOAD),
+            dispatcher=plc,
+        )
+    ).end_code == 0x0000, "completed normally"
+    assert read_sd203(plc) == CpuRunState.STOP, "and did not become the RUN state"
+
+    plc.state.switch_position = CpuRunState.RUN
+    assert read_sd203(plc) == CpuRunState.RUN, (
+        "the remote RUN was remembered as a request, so turning the key runs the CPU"
+    )
+
+
+def test_latch_clear_reads_the_state_the_client_can_see() -> None:
+    """``1005`` is legal only from STOP, and STOP now means what ``SD203`` says."""
+    plc = Dispatcher(target=FX5U_32MT_DS, memory=FX5U_32MT_DS.memory())
+    fixed = BINARY.number(0x0000, bits=16)
+    assert reply(
+        serve(
+            FX5U_32MT_DS,
+            make_request(BINARY, command=0x1005, payload=fixed),
+            dispatcher=plc,
+        )
+    ).end_code == 0x4010, "a running CPU refuses it"
+
+    plc.state.switch_position = CpuRunState.STOP
+    assert reply(
+        serve(
+            FX5U_32MT_DS,
+            make_request(BINARY, command=0x1005, payload=fixed),
+            dispatcher=plc,
+        )
+    ).end_code == 0x0000
+
+
 def test_remote_run_can_be_made_to_lie() -> None:
-    """Remote RUN with the switch in STOP completes normally and does not run."""
+    """``remote_run_lies``: ``0x0000`` and nothing changes, and now a client can tell.
+
+    This is the pathology, not the documented key-switch case -- see
+    :func:`test_the_key_switch_in_stop_completes_a_remote_run_that_did_not_run` for that
+    one. The last assertion is what was missing: with ``SD203`` disconnected from the
+    handlers, a lying CPU and an honest one were indistinguishable to every client, so
+    the one switch whose stated purpose is to give ``verify=True`` something real to
+    catch could not.
+    """
     lying = dataclasses.replace(
         FX5U_32MT_DS, pathology=FX5U_32MT_DS.pathology.replace(remote_run_lies=True)
     )
     plc = Dispatcher(target=lying, memory=lying.memory())
-    plc.state.run_state = 0x0002
-    payload = BINARY.number(1, bits=16) + BINARY.number(0, bits=8) + BINARY.number(0, bits=8)
     assert reply(
-        serve(lying, make_request(BINARY, command=0x1001, payload=payload), dispatcher=plc)
+        serve(
+            lying,
+            make_request(BINARY, command=0x1002, payload=REMOTE_STOP_PAYLOAD),
+            dispatcher=plc,
+        )
     ).end_code == 0x0000
-    assert plc.state.run_state == 0x0002
+    assert read_sd203(plc) == CpuRunState.RUN, "answered STOP, still running"
+
+    honest = Dispatcher(target=FX5U_32MT_DS, memory=FX5U_32MT_DS.memory())
+    assert reply(
+        serve(
+            FX5U_32MT_DS,
+            make_request(BINARY, command=0x1002, payload=REMOTE_STOP_PAYLOAD),
+            dispatcher=honest,
+        )
+    ).end_code == 0x0000
+    assert read_sd203(honest) == CpuRunState.STOP, (
+        "the same bytes and the same end code; only the board differs"
+    )
 
 
 def test_a_pathology_handed_to_the_dispatcher_reaches_the_handlers() -> None:
@@ -558,17 +705,15 @@ def test_a_pathology_handed_to_the_dispatcher_reaches_the_handlers() -> None:
     assert plc.board is lying
     assert not FX5U_32MT_DS.pathology.remote_run_lies, "the target itself is honest"
 
-    plc.state.run_state = 0x0002
-    payload = BINARY.number(1, bits=16) + BINARY.number(0, bits=8) + BINARY.number(0, bits=8)
-    out = reply(
+    stop = reply(
         serve(
             FX5U_32MT_DS,
-            make_request(BINARY, command=0x1001, payload=payload),
+            make_request(BINARY, command=0x1002, payload=REMOTE_STOP_PAYLOAD),
             dispatcher=plc,
         )
     )
-    assert out.end_code == 0x0000, "0x0000 on a state that was never reached"
-    assert plc.state.run_state == 0x0002, "the override lied, exactly as asked"
+    assert stop.end_code == 0x0000, "0x0000 on a state that was never reached"
+    assert read_sd203(plc) == CpuRunState.RUN, "the override lied, exactly as asked"
 
 
 def test_a_dispatcher_with_no_override_still_uses_its_target_board() -> None:
@@ -715,7 +860,7 @@ def test_the_scan_counter_advances_as_the_real_it_is() -> None:
     plc = Dispatcher(target=FX5U_32MT_DS, memory=FX5U_32MT_DS.memory())
     assert plc.advance_scan() == 1.0
     assert plc.advance_scan() == 2.0
-    assert isinstance(plc.state.scan, float)
+    assert isinstance(plc.memory.get_f32("D", 8), float)
     assert plc.memory.get_f32("D", 8) == 2.0
     assert plc.memory.get_u32("D", 8) == 0x40000000
 

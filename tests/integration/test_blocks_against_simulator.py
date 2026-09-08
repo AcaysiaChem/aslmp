@@ -11,6 +11,15 @@ simulator is an independent reader of those bytes.
 Registers follow the bench's own map: ``D0`` IO_SP, ``D2`` IO_PV, ``D4`` IO_MV, ``D6``
 IO_Err, ``D8`` IO_Scan, all f32 low word first, with ``D100``-``D119`` and ``M100``-``M119``
 as scratch.
+
+**All of them, including D8.** Until 2026-09-07 this file said that in its docstring and
+then declared ``scan: U32``, seeded it with ``set_u32``, asserted through the ``u32``
+path and configured a ``PlcClockSource(kind="u32")`` -- four restatements of the misread
+that shipped, inside the one file whose header already contradicted them. ``IO_Scan`` is
+a ``REAL``: the CPU's own ST is ``IO_Scan := IO_Scan + 1.0`` (FX5U-32MT/DS fw 1.065 at
+192.168.10.250, read out of GX Works3 2026-09-07). A ``u32`` decode of it answers
+``0x0000`` and returns a plausible rising number, which is why only the declaration can
+catch it.
 """
 
 from __future__ import annotations
@@ -18,7 +27,7 @@ from __future__ import annotations
 import contextlib
 import struct
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Final
 
 import pytest
 
@@ -29,6 +38,7 @@ from aslmp.client import Plc, PlcClockSource
 from aslmp.errors import SlmpDeviceRangeError, SlmpTargetChangedError
 from aslmp.identity import CpuIdentity
 from aslmp.profile import Family
+from aslmp.testing.dispatch import CpuRunState
 from aslmp.testing.server import PlcSimulator
 from aslmp.testing.targets import FX5U_32MT_DS
 from aslmp.timing import Transaction
@@ -37,6 +47,10 @@ from aslmp.transport.base import TransportKind
 pytestmark = pytest.mark.simulator
 
 FX5U_KEY = "melsec:iq-f/fx5u"
+
+SCAN_COUNT: Final = 1_234_567.0
+"""What ``D8`` is seeded to. A ``float``, exactly representable: 1234567 < 2**24, so the
+``f32`` holds it without rounding and an equality assertion is honest."""
 
 
 @plc_block(base="D0")
@@ -47,7 +61,9 @@ class LoopState(PlcBlock):
     process_value: F32
     output: F32
     error: F32
-    scan: U32
+    scan: F32
+    """``IO_Scan``, and it is a ``REAL`` -- see this module's docstring."""
+
     fault: Bit = at("M100")
     alarm: Bit = at("M107")
     mode: U16 = at("D110")
@@ -64,13 +80,13 @@ class Scratch:
 
 
 @contextlib.asynccontextmanager
-async def bench() -> AsyncIterator[PlcSimulator]:
+async def bench(**kwargs: Any) -> AsyncIterator[PlcSimulator]:
     """A simulator shaped like our bench: five entries, the measured pathology board.
 
     Five, not the six the real bench has grown -- UDP 5005 was added on 2026-09-07
     for the wired retest and is peer-bound to a host the simulator has no notion of.
     """
-    simulator = PlcSimulator(target=FX5U_32MT_DS)
+    simulator = PlcSimulator(target=FX5U_32MT_DS, **kwargs)
     await simulator.start()
     try:
         yield simulator
@@ -98,7 +114,7 @@ def load_bench_values(simulator: PlcSimulator) -> None:
     memory.set_f32("D", 2, 54.25)
     memory.set_f32("D", 4, 31.5)
     memory.set_f32("D", 6, -0.75)
-    memory.set_u32("D", 8, 1_234_567)
+    memory.set_f32("D", 8, SCAN_COUNT)
     memory.write_bits("M", 100, [True])
     memory.write_bits("M", 107, [True])
     memory.set_u16("D", 110, 3)
@@ -121,7 +137,7 @@ async def test_a_block_reads_the_whole_map_in_one_transaction() -> None:
     assert state.process_value == 54.25
     assert state.output == 31.5
     assert state.error == -0.75
-    assert state.scan == 1_234_567
+    assert state.scan == SCAN_COUNT
     assert state.fault is True
     assert state.alarm is True
     assert state.mode == 3
@@ -190,7 +206,7 @@ async def test_a_block_reads_the_same_values_on_every_entry(entry: str) -> None:
 
     assert (state.setpoint, state.scan, state.fault, state.mode) == (
         55.0,
-        1_234_567,
+        SCAN_COUNT,
         True,
         3,
     )
@@ -348,17 +364,60 @@ async def test_a_plan_refuses_to_resume_into_a_different_cpu(
 
 
 async def test_a_configured_plc_clock_rides_inside_the_same_snapshot() -> None:
-    """The only way to tell "the network was slow" from "the CPU did not scan"."""
+    """The only way to tell "the network was slow" from "the CPU did not scan".
+
+    ``kind="f32"`` because ``D8`` is a ``REAL``. This test declared it ``u32`` until
+    2026-09-07 -- against a simulator holding an ``f32``, that now reads 1234967040 and
+    fails, which is the point of declaring the type at all.
+    """
     async with bench() as simulator:
-        client = client_for(simulator, plc_clock=PlcClockSource("D8", kind="u32"))
+        client = client_for(simulator, plc_clock=PlcClockSource("D8", kind="f32"))
         async with client as plc:
             load_bench_values(simulator)
             plan = bind(plc, LoopState)
             state = await plan.read()
 
     assert state.tx is not None
-    assert state.tx.plc_clock == 1_234_567
-    assert state.scan == 1_234_567
+    assert state.tx.plc_clock == SCAN_COUNT
+    assert state.scan == SCAN_COUNT
+    assert state.tx.plc_clock == state.scan, (
+        "one register pair, read once, decoded the same way by the clock and the block"
+    )
+
+
+async def test_the_scan_counter_moves_under_a_client_that_reads_it_twice() -> None:
+    """A simulator whose registers never move lets a stale-value bug pass.
+
+    ``Dispatcher.advance_scan`` has said that in its docstring since it was written, and
+    it was never called while serving a request -- only by tests, which is a property of
+    the tests and not of the simulator. ``scan_per_request=True`` is what makes it true:
+    the CPU runs its program while it answers, so two reads of ``D8`` differ.
+    """
+    async with bench(scan_per_request=True) as simulator, client_for(simulator) as plc:
+        load_bench_values(simulator)
+        plan = bind(plc, LoopState)
+        first = await plan.read()
+        second = await plan.read()
+
+    assert second.scan > first.scan, "the CPU scanned between the two reads"
+    assert first.scan >= SCAN_COUNT
+
+
+async def test_a_stopped_cpu_holds_the_scan_counter_still() -> None:
+    """The same simulator with the key turned: ``SD203`` is STOP, so nothing counts.
+
+    Without this the test above would also pass against a counter that advances
+    unconditionally -- which is what it did, through a Remote STOP, until 2026-09-07.
+    """
+    async with bench(scan_per_request=True) as simulator, client_for(simulator) as plc:
+        load_bench_values(simulator)
+        simulator.state.switch_position = CpuRunState.STOP
+        plan = bind(plc, LoopState)
+        first = await plan.read()
+        second = await plan.read()
+
+    assert first.scan == second.scan == SCAN_COUNT
+    assert simulator.cpu_state() == CpuRunState.STOP
 
 
 # ========================================================================================

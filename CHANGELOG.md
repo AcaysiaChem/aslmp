@@ -201,7 +201,8 @@ why the README no longer states a suite total at all.
 supports**, and the rows above are the restated versions:
 
 - **"the library's overhead is 0.07 ms at p50" is gone.** It was finer than its own noise
-  floor. At n=120 with sd ~1.03 ms, the standard error on a *median* is about
+  floor. That run was n=120 from the laptop at 192.168.10.41 over **Wi-Fi** at ~7 ms median
+  RTT; at n=120 with sd ~1.03 ms, the standard error on a *median* is about
   1.253 × 1.03 / √120 ≈ 0.12 ms, and on a difference of two medians about 0.17 ms — more than
   twice the quantity claimed. The run also took its raw-socket control **once, before** the
   library's samples, where `docs/benchmarking.md`'s own rule is a control before *and* after so
@@ -291,7 +292,8 @@ names its host and its link as well as the CPU, the firmware and the date.
   bench scripts take a named `ENTRY_RELEASE_SETTLE_S` (5 ms) outside every timed section, and
   `SlmpConnectionEntryBusyError` now names both causes. Ambiguity `A-ENTRY-RELEASE-RACE`.
 - **A five-minute closed-loop soak, `bench/soak.py`.** 15,000 cycles, 30,005 transactions, 300.0 s
-  at exactly 50.0 Hz, wired, TCP 5002: **0 errors, 0 reconnects, 0 entry-busy, 0 cadence
+  at exactly 50.0 Hz, from `argus-bench` (192.168.10.36) over the **wired** link at 3.64 ms
+  median RTT, TCP 5002: **0 errors, 0 reconnects, 0 entry-busy, 0 cadence
   overruns**, block read p50 3.67 / p99 4.69 ms with the p50 moving 3.72 → 3.67 ms across the run,
   and the CPU scanning at 969/s under load against that session's own idle reference of 1029/s —
   a cost of about 5–6 % of scan rate, the range being the 1.1 % disagreement between that
@@ -326,7 +328,9 @@ where it was found and **not traced**. It was right. This pass follows the arith
   "about 5–6 %" because it is a ratio of two scan rates and inherits the 1.1 % disagreement
   between the two idle references. Prose in `bench/`, `tests/hardware/` and `aslmp.testing`
   still quotes ~1024 and ~1029; those files were outside this pass and are named in section 17
-  rather than left for somebody to find.
+  rather than left for somebody to find. **(Superseded the same day.** Naming them in a table
+  was a promise, not a fix, and the next entry below is what closing them actually took. That
+  is the pattern this project keeps repeating and the reason there is now a test.)
 - **Two retracted claims were still shipping in runtime text.** `aslmp --help` told five of
   eleven subcommands that "TCP wins the latency tail" — the claim withdrawn on 2026-09-07 and
   corrected in `client.TRANSPORT_CHOICE` — and `aslmp.testing.pathology.ONE_CONNECTION`, a
@@ -353,6 +357,158 @@ where it was found and **not traced**. It was right. This pass follows the arith
 - **`pip install aslmp` does not work**, because there is no `aslmp` on PyPI. The README now
   says to install from a checkout until the first release, and the suite's test count has been
   taken out of the README rather than left to go stale.
+
+### Behaviour changes, 2026-09-07 — three of them break callers
+
+The pass before this one traced a wrong number. This one closes the *shape* the number came
+from: a default standing in for a fact only the caller knows. `aslmp` is `0.1.0.dev0` with
+nothing released, so each guess is **removed** rather than deprecated and carried forward for
+a compatibility nobody needs yet.
+
+#### Breaking: three arguments lost their defaults, because the defaults were guesses
+
+- **`PlcClockSource.kind` is required.** The class carried an address and nothing else, and
+  `blocks/plan.py` read the clock point as a hard-coded unsigned double word. On the bench
+  that wrote it, `D8` is a `REAL`, so `tx.plc_clock` published a float's **bit pattern**: a
+  number that rises on every scan, is monotonic, is never flagged, and is wrong by a factor
+  that *drifts* as the float crosses a power of two. Measured in one session: 1018 real
+  counts/s reported as 16,274. `kind` then spent one revision defaulting to `"u32"` "for
+  compatibility" — the identical defect one layer out, since `PlcClockSource("D8")` would
+  still have published 16,274 for 1018. It has no default now. `bounds=` is the optional
+  second half: a clock outside the declared range raises `SlmpImplausibleValueError` rather
+  than being published.
+- **`aslmp read --as` and `aslmp write --as` are required.** `read`'s defaulted to `u16`,
+  which made `aslmp read 192.168.10.250 D8` print `54720` — the low half of that same float's
+  bit pattern, end code `0x0000`. "What is in `D8`" is the first question a newcomer asks and
+  the register does not know the answer, so the caller is asked, exactly as `--profile` asks.
+  `read` was fixed first and `write` — the *mutating* half of the same pair, where a wrong
+  `--as` moves a machine rather than misprinting a number — kept the default for one revision.
+  Both are `required=True` in their parsers now, over one shared `KindRequiredParser` and one
+  shared `VALUE_KINDS`, so the pair cannot drift apart again.
+- **`unsigned()`'s `signed_field` is required.** It promised "never masked and never
+  truncated" in its own docstring and then accepted the union of the signed and unsigned
+  ranges before masking, so `write_i16(40000)` was accepted and read back `-25536`. It
+  enforces the declared type now. `signed_field` then spent one revision defaulting to
+  `None` — the same guess-shaped default again, on the function whose whole job is to refuse
+  guesses — and that default is gone. `None` remains a legal *explicit* argument for exactly
+  one caller: `write_words`, the raw-register door, where the caller has said they mean bits.
+
+#### Refusals where there used to be a plausible wrong answer
+
+- **`monitor_read` refuses a registration this client did not make.** A `MonitorRegistration`
+  from another client raised nothing and sent an `0x0802` that read whatever *that* client's
+  list happened to be — right-looking values from the wrong registers. It now raises
+  `SlmpConfigurationError`, names both clients, and sends nothing.
+- **`read_block` / `write_block` ignored their receiver entirely** — `return await
+  plan.read()`, with `self` unused. A `Plc` pointed at a non-existent host and never connected
+  returned a populated block and reported a successful write, while the real PLC's registers
+  moved on a different client. A plan used on the wrong client now raises and names both peers.
+- **`raw_command(expect_response=False)` corrupted the next transaction.** It put a
+  response-producing request on the wire, never read the answer, and left the connection
+  `READY`, so the following read returned the previous request's bytes with end code `0x0000`
+  — the exact corruption the in-flight gate exists to prevent, reached without touching the
+  gate. The connection is retired instead: the escape hatch costs the socket, which is the
+  honest price for nothing having read the answer.
+- **`raw_command` bypassed the `allow_remote_control` interlock**, because the interlock lived
+  in `Command.validate()` and `_RawCommand.validate()` is a deliberate no-op. The interlock is
+  a property of the client and is checked there now.
+- **`write_bits` no longer coerces** `2`, `-1` or `"yes"` to `True`.
+- **Value-domain failures on write escaped the documented error tree** as bare `OverflowError`,
+  `struct.error` and `TypeError`. They are `SlmpValueRangeError`, and nothing is sent.
+
+#### The simulator agreed with the defect, which is why ~4,100 tests missed it
+
+- **`aslmp.testing` modelled `D8`/`D9` as an integer double word**, and its docstrings said so.
+  The bench's `D8` is a `REAL`. So every simulator-backed test of `plc_clock` passed while the
+  library published a bit pattern: a test that cannot fail is worse than no test, because it is
+  counted. The simulator models the register the way the silicon does; `bump_u32` stays for a
+  counter a CPU really declares `DWORD`, and says explicitly that it is not the bench's `D8`.
+  The replacement test was proved to fail without the fix, two independent ways.
+- **`PlcSimulator(pathology=...)` was honoured by the socket layer and ignored by every
+  handler**, so `remote_run_lies`, `remote_reset_no_response` and
+  `accept_illegal_random_points` were dead when set that way — including the one whose stated
+  purpose is to give `verify=True` something real to catch.
+
+#### The command line said things that were not true
+
+- **`aslmp ambiguities` surfaced 14 of the 30 rows** in the shipped table, and
+  `--key A-UDP-TAIL-LATENCY` reported no such ambiguity — denying the existence of this
+  project's own published retraction. A test now asserts the CLI surfaces exactly as many rows
+  as the file holds.
+- **`aslmp capabilities` told every user, for every profile, that we deliberately never sent a
+  remote-control command**, after RUN, STOP and PAUSE had been driven against this CPU and
+  verified against its scan counter.
+- **`import aslmp; aslmp.sync` raised `AttributeError`** while README section 1 advertises
+  `aslmp.sync.Plc`. The documented submodules resolve through the lazy `__getattr__` now, and
+  importing `aslmp` still pulls in neither `socket` nor `asyncio`.
+- A deliberately answerless transaction was booked as a **failure** while the call returned
+  successfully, and `aslmp serve` wrote its banner through a block-buffered stdout while
+  defaulting to an ephemeral port, so backgrounding the simulator to a log file left the port
+  unknowable.
+- **`aslmp read`'s usage line printed `[--as {...}]`** — brackets, meaning optional — directly
+  above a help string that began "REQUIRED", in the command this session had just made
+  required. The requirement lived in the body, where argparse could not see it. `--as` is
+  `required=True` in the parser now, so the usage line, the help and the exit status agree,
+  and the reason a caller is being asked (`WHY_AS_IS_REQUIRED`) is still what gets printed
+  rather than argparse's one-liner — that is what `KindRequiredParser` is for.
+
+### One number, one place: the scan rate and the latency conditions (2026-09-07)
+
+The section above and the honesty sweep before it each fixed an instance and left a sibling.
+This pass exists to stop that being true of the *numbers*, and to leave a test behind rather
+than a promise.
+
+- **The repository published one idle scan rate and then contradicted itself in four files.**
+  `docs/hardware.md` said 1018/s; `bench/soak.py` said 1029; `tests/hardware/test_remote_control.py`
+  said ~1029 twice; `tests/hardware/test_fx5u.py` said "the documented ~1024" and then
+  *depended* on it, as `expected = 1024 * 2.0`. ~1024 was never a measurement. The published
+  figure is **1018 scans/s, 982 µs per scan** with its conditions in `docs/hardware.md`
+  section 17; `982.3 µs` is `1e6 / 1018.0` rather than a second measurement; and every one of
+  those files now cites that section instead of restating the number as a fact of its own.
+  `tests/hardware/test_fx5u.py` derives its expectation from `IDLE_SCAN_RATE_HZ`.
+- **Section 17's own measurement named the wrong host.** The 20 s window — 20,374 counts in
+  20.014 s — was taken from `argus-bench` (192.168.10.36) on the **wired** link, not from the
+  laptop over Wi-Fi as published; the laptop's own 20 s window is a separate figure, **1018.4**,
+  and the two are 0.04 % apart. Nothing about the number moves, which is exactly why the
+  mislabel survived. A table that names the wrong host is not labelled.
+- **A within-run pair may no longer be split from its partner.** `969/s` under load is the
+  wired soak's loaded figure and `1029/s` is that same run's own idle reference; quoting either
+  alone turns a within-session ratio into a repository-wide claim, which is how ~1029 became a
+  standing figure in two test modules. The percentage that pair supports — "about 5-6 %" — is
+  derived from both endpoints (5.8 % against its own reference, 4.8 % against the published
+  figure) rather than asserted.
+- **`tests/hardware/test_remote_control.py` stopped deriving a scan rate from a 300 ms
+  window.** Two ~7 ms round trips are 5 % of 300 ms, and dividing anyway is how this repository
+  came to carry three figures for one quantity. The counts (324 running, 0.0 stopped, 326
+  running again) are what that test asserts on and they stay; the rate is quoted from
+  section 17.
+- **Latency figures that named neither a host nor a link were found and labelled** — which is
+  the rule this project adopted *in writing* after withdrawing "TCP wins the tail", and then
+  did not apply to its own front door. The TCP handshake's 5.4 ms, `probe`'s round trip, the
+  `TCP_NODELAY` p50 difference, the block-against-five-reads pair, the UDP queue ladder, the
+  27 ms atomicity split, the withdrawn `+0.07 ms` overhead, and — in `README.md`,
+  `docs/benchmarking.md` and
+  `bench/_report.py`, three copies of the same unlabelled figure — the two afternoons that are
+  this project's own argument for demanding a control. Where a condition was never written down
+  (the dates of those two afternoons) it is printed as a gap in the record rather than guessed
+  at. `docs/architecture.md`'s "11.0 ms for a 14.0 ms transaction" is now labelled as
+  illustrative arithmetic, because it is, and an unlabelled illustration reads as a measurement.
+- **The `D8` misread finally has an ambiguity row**, `A-SCAN-COUNTER-TYPE`, carrying the same
+  candour as `A-UDP-TAIL-LATENCY`: both are there because the project published them wrong. Its
+  third reading — "the wire settles it" — is the false one, and saying so is the whole reason
+  the required arguments above exist. Its open half is a question for a Mitsubishi engineer: is
+  there **any** iQ-F command that reports a device's declared type? If one exists it closes the
+  class rather than the instance.
+- **The enforcement test is the deliverable.** `tests/unit/test_citations.py` reads the 20 s
+  row out of `docs/hardware.md` section 17, divides counts by seconds, and holds every scan
+  figure in `README.md`, `CHANGELOG.md`, `docs/`, `bench/`, `tests/hardware/` and `src/aslmp/`
+  against that one derived value; refuses `~1024`, `~1029` alone and `61.6 µs` by name;
+  requires every scan period in prose to equal `1e6 / 1018.0`; requires every file carrying a
+  scan figure to cite section 17; requires every latency table and every `p50` line in the
+  reader-facing documents to name a host and a medium; and requires an option whose help calls
+  itself required to be required in its own parser. A number that drifts, a sibling left
+  behind, or a help string that contradicts its usage line fails the suite instead of waiting
+  for the next review.
 
 ### Known limitations shipped knowingly
 

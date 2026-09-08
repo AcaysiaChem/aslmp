@@ -48,6 +48,7 @@ from aslmp.identity import CpuStatus
 from aslmp.observability import Connected, ConnectionEvent, HandshakeFailed
 from aslmp.profile import Encoding
 from aslmp.results import RandomReading, Reading, WriteAck
+from aslmp.testing.dispatch import CpuRunState
 from aslmp.testing.pathology import HEALTHY
 from aslmp.testing.server import Entry, PlcSimulator
 from aslmp.testing.targets import FX5U_32MT_DS, PEDANTIC, SimulatorTarget
@@ -306,21 +307,30 @@ async def test_program_2_the_plc_end_code_reaches_the_caller_as_a_named_exceptio
 async def test_program_3_one_random_read_is_one_snapshot_in_the_callers_order() -> None:
     """The wire groups words before double words; the caller's order comes back.
 
-    Reading ``D0`` as one float and ``D8`` as one word in the same ``0403`` is ordinary,
-    and a dict keyed by device string could not express it -- which is why the result is
-    positional.
+    Reading ``D0`` as one float, ``M100`` as one bit and ``D104`` as one unsigned double
+    word in the same ``0403`` is ordinary, and a dict keyed by device string could not
+    express it -- which is why the result is positional.
+
+    ``D8`` is declared ``f32`` because on the bench it is: the counter is a ``REAL``
+    (``IO_Scan := IO_Scan + 1.0``, FX5U-32MT/DS fw 1.065, 2026-09-07). This test used to
+    seed it with ``set_u32`` and read it back as ``u32``, which passed for the reason
+    every version of that misread passes -- both halves were wrong the same way. The
+    ``u32`` point moved to ``D104``, which is scratch and carries no declared type, so
+    the mixed-kind property this test is actually about survives.
     """
     async with bench() as simulator, client_for(simulator) as plc:
         simulator.memory.set_f32("D", 0, 60.0)
         simulator.memory.set_f32("D", 2, 59.25)
-        simulator.memory.set_u32("D", 8, 4096)
+        simulator.memory.set_f32("D", 8, 4096.0)
+        simulator.memory.set_u32("D", 104, 4_000_000_000)
         simulator.memory.write_bits("M", 100, [True, False, True])
 
         points = [
             dword("D0", kind="f32"),
             dword("D2", kind="f32"),
             bit_point("M100"),
-            dword("D8", kind="u32"),
+            dword("D8", kind="f32"),
+            dword("D104", kind="u32"),
         ]
         simulator.clear_transcript()
         reading = await plc.read_random(points)
@@ -329,7 +339,8 @@ async def test_program_3_one_random_read_is_one_snapshot_in_the_callers_order() 
         assert reading.f32(0) == 60.0
         assert reading.f32(1) == 59.25
         assert reading.bits(2)[:3] == (True, False, True)
-        assert reading.u32(3) == 4096
+        assert reading.f32(3) == 4096.0
+        assert reading.u32(4) == 4_000_000_000
         assert reading.tx.command == 0x0403
         assert reading.tx.timing.is_complete
         assert len(simulator.transcript) == 2  # one request, one response. One snapshot.
@@ -532,11 +543,17 @@ async def test_program_5_a_remote_run_that_did_not_run_raises_rather_than_return
     ``verify=True`` is the default precisely because a ``0x0000`` end code there is a
     successful answer to a request that did not happen, and reporting it as success would
     be the silent lie this library is written against.
+
+    **The setup is a key switch, not a hand-written SD203.** This test used to poke
+    ``SD203`` directly and then assert that the client noticed -- which it would have done
+    against a simulator whose ``1001`` handler was ``return Reply(0x0000)``, because
+    nothing connected the two. Turning the simulated key is the documented cause; the
+    CPU derives ``SD203`` from it, and the client reads what a client can read.
     """
     async with bench() as simulator, client_for(
         simulator, allow_remote_control=True
     ) as plc:
-        simulator.memory.set_u16("SD", 203, int(CpuStatus.STOP.value))
+        simulator.state.switch_position = CpuRunState.STOP
         with pytest.raises(SlmpRemoteStateNotReachedError) as caught:
             await plc.remote.run()
         assert caught.value.requested == "RUN"
@@ -544,28 +561,101 @@ async def test_program_5_a_remote_run_that_did_not_run_raises_rather_than_return
         assert plc.remote.last is not None
         assert plc.remote.last.verified is True
         assert plc.remote.last.status is CpuStatus.STOP
+        assert simulator.cpu_state() == CpuRunState.STOP, "and the CPU really did not run"
 
 
-async def test_program_5_verify_false_is_a_documented_choice_and_says_so() -> None:
+async def test_program_5_the_same_remote_run_succeeds_with_the_key_turned() -> None:
+    """The control for the test above: same client, same bytes, a CPU that can run.
+
+    Without this, ``run()`` raising proves only that ``run()`` raises. The difference
+    between the two tests is one field of simulated hardware, and the end code is
+    ``0x0000`` in both.
+    """
     async with bench() as simulator, client_for(
         simulator, allow_remote_control=True
     ) as plc:
-        simulator.memory.set_u16("SD", 203, int(CpuStatus.STOP.value))
+        assert await plc.remote.stop() is CpuStatus.STOP
+        assert await plc.remote.run() is CpuStatus.RUN
+        assert simulator.cpu_state() == CpuRunState.RUN
+
+
+async def test_program_5_a_lying_cpu_is_caught_by_the_verify_that_exists_for_it() -> None:
+    """``remote_run_lies``: ``0x0000`` on a state that was never reached, no key involved.
+
+    The pathology's stated purpose is to give ``verify=True`` something real to catch, and
+    until 2026-09-07 it could not: with ``SD203`` derived from nothing, a lying CPU and an
+    honest one returned identical bytes for identical requests.
+    """
+    async with bench(
+        pathology=FX5U_32MT_DS.pathology.replace(remote_run_lies=True)
+    ) as simulator, client_for(simulator, allow_remote_control=True) as plc:
+        with pytest.raises(SlmpRemoteStateNotReachedError) as caught:
+            await plc.remote.stop()
+        assert (caught.value.requested, caught.value.actual) == ("STOP", "RUN")
+        assert simulator.cpu_state() == CpuRunState.RUN
+
+
+async def test_program_5_verify_false_is_a_documented_choice_and_says_so() -> None:
+    """``verify=False`` returns the state it *asked for*, and the CPU is in another one.
+
+    The setup is the documented key switch again, and the last assertion is the price of
+    the flag: ``run(verify=False)`` reported RUN while ``SD203`` said STOP the whole time.
+    """
+    async with bench() as simulator, client_for(
+        simulator, allow_remote_control=True
+    ) as plc:
+        simulator.state.switch_position = CpuRunState.STOP
         assert await plc.remote.run(verify=False) is CpuStatus.RUN
         assert plc.remote.last is not None
         assert plc.remote.last.verified is False
         assert "UNVERIFIED" in str(plc.remote.last)
+        assert await plc.remote.status() is CpuStatus.STOP, (
+            "the state verify=False did not look at"
+        )
 
 
 async def test_program_5_a_verified_stop_that_took_returns_the_status_it_read() -> None:
+    """A CPU that was running, a Remote STOP, and a status the handler actually caused.
+
+    No line of setup puts ``SD203`` where this test wants it: the CPU starts in RUN, and
+    the only thing that moves it is the ``1002`` under test. That is the whole difference
+    from the version of this test that stood here until 2026-09-07, which pre-set
+    ``SD203`` to ``STOP`` and would have passed against a no-op handler.
+    """
     async with bench() as simulator, client_for(
         simulator, allow_remote_control=True
     ) as plc:
-        simulator.memory.set_u16("SD", 203, int(CpuStatus.STOP.value))
+        assert await plc.remote.status() is CpuStatus.RUN, "the CPU was running"
         assert await plc.remote.stop() is CpuStatus.STOP
         assert plc.remote.last is not None
         assert plc.remote.last.verify_tx is not None
         assert await plc.remote.status() is CpuStatus.STOP
+        assert simulator.cpu_state() == CpuRunState.STOP
+
+
+async def test_program_5_a_stopped_cpu_stops_scanning() -> None:
+    """The other oracle ``tests/hardware/test_remote_control.py`` trusts, in simulation.
+
+    That file verifies a remote STOP against the program's own free-running counter
+    rather than against ``SD203``, "because the counter is something only the CPU can
+    advance". The simulator could not reproduce either half: ``advance_scan()`` counted
+    happily through a Remote STOP, so a client-side bug that mistook a stale D8 for a
+    stopped CPU -- or a running one for a stopped one -- had nothing to fail against.
+    """
+    async with bench() as simulator, client_for(
+        simulator, allow_remote_control=True
+    ) as plc:
+        simulator.dispatcher.advance_scan()
+        running_at = simulator.memory.get_f32("D", 8)
+        assert running_at == 1.0
+
+        assert await plc.remote.stop() is CpuStatus.STOP
+        for _ in range(5):
+            simulator.dispatcher.advance_scan()
+        assert simulator.memory.get_f32("D", 8) == running_at, "a stopped CPU does not scan"
+
+        assert await plc.remote.run() is CpuStatus.RUN
+        assert simulator.dispatcher.advance_scan() == running_at + 1.0
 
 
 async def test_program_5_remote_reset_expects_silence_and_takes_the_connection_with_it(

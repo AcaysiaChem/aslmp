@@ -75,6 +75,7 @@ from aslmp.commands.base import (
     CommandSummary,
     EncodeContext,
     WordOrder,
+    decoded,
     encoded,
     expect_payload_len,
     real,
@@ -478,21 +479,21 @@ def _registers(value: float, struct_code: str) -> tuple[int, ...]:
 def _text(value: object, name: str, encoding: str, what: str) -> str:
     """One string field's registers as characters, cut at the NUL word.
 
+    The decode itself goes through :func:`~aslmp.commands.base.decoded`, which is the
+    read-side twin of the :func:`~aslmp.commands.base.encoded` that
+    :func:`_string_bytes` writes through -- one function for "these bytes are not text in
+    that codec", so the block path and :meth:`aslmp.client.Plc.read_str` cannot answer
+    the same question two different ways.
+
     Nothing here replaces an undecodable byte: a register that does not hold text in the
     declared encoding is a block declaration that does not match the PLC program, and
     ``errors="replace"`` would put question marks into a recipe name and report success.
     """
     if not isinstance(value, bytes):  # pragma: no cover - "Ns" always unpacks bytes
         raise SlmpPayloadShapeError(f"{what}: field {name} did not decode as registers.")
-    try:
-        return value.split(b"\x00", 1)[0].decode(encoding)
-    except UnicodeDecodeError as exc:
-        raise SlmpPayloadShapeError(
-            f"{what}: field {name} holds {value.hex(' ')}, which is not {encoding} "
-            f"text. The end code was 0x0000, so this is a block declaration that does "
-            f"not match what the PLC program stores there, not a failure the CPU "
-            f"reported. Nothing here substitutes replacement characters."
-        ) from exc
+    return decoded(
+        value.split(b"\x00", 1)[0], encoding=encoding, what=f"{what}: field {name}"
+    )
 
 
 # ========================================================================================
@@ -1154,10 +1155,12 @@ def _string_bytes(value: object, name: str, spec: StringSpec) -> bytes:
     )
     if len(raw) > 2 * spec.words - 1:
         raise SlmpBlockLayoutError(
-            f"field {name} holds {spec.length} characters plus a NUL terminator "
-            f"({spec.words} register(s)), and {value!r} encodes to {len(raw)} byte(s) "
-            f"in {spec.encoding}. Nothing here truncates a string to fit: a recipe name "
-            f"silently cut in half is a different recipe written to the plant."
+            f"field {name} is a Str({spec.length}) and its {spec.words} register(s) "
+            f"hold at most {2 * spec.words - 1} byte(s) before the NUL, and {value!r} "
+            f"encodes to {len(raw)} byte(s) in {spec.encoding}. The capacity is in "
+            f"BYTES and equals the declared character count only for a single-byte "
+            f"codec. Nothing here truncates a string to fit: a recipe name silently cut "
+            f"in half is a different recipe written to the plant."
         )
     return raw.ljust(2 * spec.words, b"\x00")
 

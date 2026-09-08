@@ -54,7 +54,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from aslmp.wire.raw import RawRequest
 
 __all__ = [
+    "CPU_STATUS_DEVICE",
+    "CPU_STATUS_INDEX",
     "HANDLERS",
+    "PASSWORD_EXEMPT_COMMANDS",
     "CpuRunState",
     "DecodedDevice",
     "Dispatcher",
@@ -65,6 +68,8 @@ __all__ = [
     "ServerContext",
     "SessionState",
     "Silence",
+    "effective_cpu_state",
+    "publish_cpu_state",
     "registered_request_codes",
 ]
 
@@ -137,6 +142,28 @@ class CpuRunState:
     PAUSE: Final = 0x0003
 
 
+CPU_STATUS_DEVICE: Final = "SD"
+CPU_STATUS_INDEX: Final = 203
+"""Where a simulated CPU publishes its operating status: ``SD203``, an ordinary word.
+
+Spelled out here rather than imported from :data:`aslmp.identity.SD203`, for the reason
+this module's decoders are not ``encode()`` run backwards: if the client reads the
+register the simulator writes *because both took the number out of one constant*, then a
+test proving a client can see a Remote STOP proves only that the two halves share a
+variable. ``tests/unit/test_simulator_state.py`` asserts the two spellings agree, which
+is a comparison rather than an identity.
+"""
+
+PASSWORD_EXEMPT_COMMANDS: Final[frozenset[int]] = frozenset({0x1630})
+"""What a locked CPU still serves: ``1630`` Remote Password Unlock, and nothing else.
+
+"The remote password status of the port used for communications is locked... Nothing else
+can be done until the port is unlocked" -- 0xC201, SH(NA)-081257ENG rev AD, 3.5 List of
+Error Codes. ``1631`` is not exempt: locking an already-locked port is one of the things
+that cannot be done.
+"""
+
+
 @dataclass(slots=True)
 class SessionState:
     """What a simulated CPU remembers between requests.
@@ -144,10 +171,57 @@ class SessionState:
     Mutable, and shared across every connection to one simulator, because that is what a
     CPU is: SLMP issues no registration handle, so two clients registering a monitor list
     clobber each other, and reproducing that is the point.
+
+    .. rubric:: Every field here is visible to a client, and a test enforces it
+
+    A field a handler writes and nothing can read is worse than an unimplemented handler,
+    because it looks implemented. Until 2026-09-07 six of the seven fields here were
+    write-only or never touched at all -- ``monitor_points`` was the only one a client
+    could see -- and the damage was not theoretical: ``run_state`` was written by ``1001``,
+    ``1002`` and ``1003`` and read by nothing, ``SD203`` was never derived from it, so a
+    Remote STOP that answered ``0x0000`` left ``read_cpu_status()`` reporting RUN and left
+    the scan counter counting -- and every verified-remote test in the suite set ``SD203``
+    to the answer it wanted by hand beforehand, which is to say each of them would have
+    passed against a handler that returned ``0x0000`` and did nothing.
+
+    So: ``SD203`` in device memory is the CPU's operating status, and this class holds
+    only the *inputs* to it. ``tests/unit/test_simulator_state.py`` refuses any field
+    here that a client cannot distinguish two values of through requests alone.
+
+    .. rubric:: What is deliberately not here
+
+    * ``run_state`` -- replaced by :attr:`remote_request` plus ``SD203``, above.
+    * ``error_flag`` -- set to ``False`` by ``1617`` Clear Error, never set to ``True``
+      by anything, and readable by nothing. This CPU model has no error latch; a boolean
+      pretending otherwise made ``1617`` look modelled when it is only answered.
+    * ``served`` -- a request count no SLMP command returns.
+      :attr:`~aslmp.testing.server.PlcSimulator.transcript` already holds every request,
+      and it holds the bytes rather than a number.
+    * ``scan`` -- a mirror of ``D8``/``D9``, which is where the counter actually lives.
+      Two copies of one number is one copy too many; read
+      :meth:`~aslmp.testing.memory.DeviceMemory.get_f32` (and note that register is a
+      ``REAL``, not a ``u32``).
     """
 
-    run_state: int = CpuRunState.RUN
     switch_position: int = CpuRunState.RUN
+    """The RUN/STOP key switch: a physical contact, and the first input to ``SD203``.
+
+    A client can neither move it nor read it, and it is still not dead configuration --
+    it decides whether a Remote RUN takes. SH(NA)-080956ENG-M 6.9 Remote RUN, p.131: with
+    the switch in STOP a Remote RUN "will be completed normally. However, the access
+    destination does not become the RUN state." End code ``0x0000`` on a state that was
+    never reached is precisely why ``verify=True`` is the client's default, and with this
+    field wired to ``SD203`` the simulator can finally produce it.
+    """
+
+    remote_request: int = CpuRunState.RUN
+    """What the last ``1001``/``1002``/``1003`` asked for: the *request*, never the answer.
+
+    The answer is ``SD203``, and it is :func:`effective_cpu_state` of this and
+    :attr:`switch_position`. Keeping the request separate from the answer is what lets
+    the key switch overrule it without either one becoming a lie.
+    """
+
     monitor_points: tuple[tuple[DeviceType, int, Unit, int], ...] | None = None
     """The registered ``0801`` list as ``(device, index, unit, words)``, or ``None``.
 
@@ -156,16 +230,35 @@ class SessionState:
     """
 
     password_locked: bool = False
-    error_flag: bool = False
-    served: int = 0
+    """Whether ``1631`` has locked this port. Everything but ``1630`` then answers ``0xC201``.
 
-    scan: float = 0.0
-    """The scan counter as the register holds it: a ``float``, because ``D8`` is a ``REAL``.
-
-    ``int`` here would be the same mis-declaration the library shipped and would let a
-    simulator-backed test of an ``f32`` clock agree with a ``u32`` decode of it. See
-    :meth:`Dispatcher.advance_scan`.
+    Setting this and serving every request anyway is what it used to do, which made
+    ``1631`` a no-op with bookkeeping. See :data:`PASSWORD_EXEMPT_COMMANDS`.
     """
+
+
+def effective_cpu_state(state: SessionState) -> int:
+    """What ``SD203`` must say: the key switch first, then the last remote request.
+
+    The switch wins because it is a physical contact and ``1001`` is a request over an
+    unauthenticated socket. That asymmetry is the documented behaviour, not a choice made
+    here (SH(NA)-080956ENG-M 6.9, p.131).
+    """
+    if state.switch_position == CpuRunState.STOP:
+        return CpuRunState.STOP
+    return state.remote_request
+
+
+def publish_cpu_state(memory: DeviceMemory, state: SessionState) -> int:
+    """Write :func:`effective_cpu_state` into ``SD203`` and return what it now holds.
+
+    Called at the top of every :meth:`Dispatcher.handle`, because a real CPU checks its
+    key switch every scan and because that is what makes a hand-written ``SD203`` a
+    transient rather than a way for a test to fake the answer it is about to assert.
+    """
+    value = effective_cpu_state(state)
+    memory.set_u16(CPU_STATUS_DEVICE, CPU_STATUS_INDEX, value)
+    return value
 
 
 # ----------------------------------------------------------------------------------------
@@ -315,6 +408,16 @@ class ServerContext:
         """A refusal carrying the end code this target declares for ``name``."""
         code = getattr(self.target.end_codes, name)
         return RefusalError(int(code), detail)
+
+    def request_cpu_state(self, requested: int) -> int:
+        """Ask the CPU for a run state and publish what it actually reached.
+
+        Returns the state ``SD203`` now holds, which is ``requested`` only if the key
+        switch permits it. A handler that called this and then reported its own argument
+        back would be re-inventing the defect this exists to close.
+        """
+        self.state.remote_request = requested
+        return publish_cpu_state(self.memory, self.state)
 
     def device_number_base(self, dt: DeviceType) -> int:
         """The base an ASCII device number's digits are written in, for this entry.
@@ -495,11 +598,19 @@ def _handle_self_test(ctx: ServerContext, cursor: PayloadCursor) -> Outcome:
 
 
 def _handle_clear_error(ctx: ServerContext, cursor: PayloadCursor) -> Outcome:
-    """``1617``: clear the own-station error code. No request data, no response data."""
+    """``1617``: clear the own-station error code. No request data, no response data.
+
+    Nothing is cleared, because this CPU model holds no error latch: no target declares
+    one, nothing in the dispatcher ever sets one, and no request could read one back.
+    This handler used to assign ``False`` to a ``SessionState.error_flag`` that was never
+    ``True`` and that no command returned -- a bookkeeping gesture that made ``1617``
+    read as modelled. Answering the command and modelling nothing is the honest pair;
+    when a target grows a real error latch, this is where it gets cleared, and the field
+    that holds it has to be readable through some command or it is the same defect again.
+    """
     cursor.finish()
     if not ctx.target.clear_error:
         raise ctx.refuse("unsupported_command", "this CPU does not serve 0x1617")
-    ctx.state.error_flag = False
     return Reply(0x0000)
 
 
@@ -793,7 +904,14 @@ def _require_remote(ctx: ServerContext) -> None:
 
 
 def _handle_remote_run(ctx: ServerContext, cursor: PayloadCursor) -> Outcome:
-    """``1001``: mode, then the clear mode and one reserved byte."""
+    """``1001``: mode, then the clear mode and one reserved byte.
+
+    Whether the CPU actually runs is :func:`effective_cpu_state`'s business: with
+    :attr:`SessionState.switch_position` at ``STOP`` this answers ``0x0000`` and
+    ``SD203`` still reads ``STOP``, which is the manual's own sentence (p.131) rather
+    than a pathology. ``remote_run_lies`` is the *other* case -- a CPU that answers
+    ``0x0000`` and changes nothing for no documented reason at all.
+    """
     _require_remote(ctx)
     mode = cursor.number(16)
     clear = cursor.number(8)
@@ -808,7 +926,7 @@ def _handle_remote_run(ctx: ServerContext, cursor: PayloadCursor) -> Outcome:
         )
     if ctx.pathology.remote_run_lies:
         return Reply(0x0000)
-    ctx.state.run_state = CpuRunState.RUN
+    ctx.request_cpu_state(CpuRunState.RUN)
     return Reply(0x0000)
 
 
@@ -819,7 +937,7 @@ def _handle_remote_pause(ctx: ServerContext, cursor: PayloadCursor) -> Outcome:
     cursor.finish()
     if ctx.pathology.remote_run_lies:
         return Reply(0x0000)
-    ctx.state.run_state = CpuRunState.PAUSE
+    ctx.request_cpu_state(CpuRunState.PAUSE)
     return Reply(0x0000)
 
 
@@ -829,7 +947,7 @@ def _handle_remote_stop(ctx: ServerContext, cursor: PayloadCursor) -> Outcome:
     _consume_fixed_field(ctx, cursor)
     if ctx.pathology.remote_run_lies:
         return Reply(0x0000)
-    ctx.state.run_state = CpuRunState.STOP
+    ctx.request_cpu_state(CpuRunState.STOP)
     return Reply(0x0000)
 
 
@@ -837,7 +955,7 @@ def _handle_remote_latch_clear(ctx: ServerContext, cursor: PayloadCursor) -> Out
     """``1005``: the fixed field. Legal only from STOP."""
     _require_remote(ctx)
     _consume_fixed_field(ctx, cursor)
-    if ctx.state.run_state != CpuRunState.STOP:
+    if effective_cpu_state(ctx.state) != CpuRunState.STOP:
         raise RefusalError(0x4010, "latch clear needs the CPU stopped")
     return Reply(0x0000)
 
@@ -949,14 +1067,58 @@ class Dispatcher:
     ``pathology=`` argument reaches the handlers and not only the socket layer.
     """
 
+    scan_per_request: bool = False
+    """Advance ``D8``/``D9`` once per served request, if the CPU is running.
+
+    Off by default, and the default is a statement rather than caution: the bench CPU
+    advances ``IO_Scan`` on a wall clock at about 1018 scans/s (the one idle scan rate
+    this repository publishes; conditions in ``docs/hardware.md`` section 17) whether or
+    not anybody is talking to it, so a counter that moves per request is not a model of
+    that silicon --
+    it is a model of a CPU that scans only when asked, which no CPU does.
+
+    Turn it on to say "this simulated CPU is running the bench's program while it serves"
+    and get the property :meth:`advance_scan` alone cannot give you: registers that move
+    underneath a client, so a stale-value bug has something to fail against. Two reads of
+    ``D8`` then differ, and a test that asserts an exact count has to seed and freeze it
+    (leave this off) rather than assume the CPU stood still.
+    """
+
+    def __post_init__(self) -> None:
+        try:
+            self.publish_cpu_state()
+        except SimulatorMemoryError as exc:
+            raise ValueError(
+                f"a simulated CPU has to be able to report its own operating status, "
+                f"and this memory cannot hold {CPU_STATUS_DEVICE}{CPU_STATUS_INDEX}: "
+                f"{exc}"
+            ) from exc
+
     @property
     def board(self) -> Pathology:
         """The pathology actually in force: the override if there is one, else the target's."""
         return self.target.pathology if self.pathology is None else self.pathology
 
+    def publish_cpu_state(self) -> int:
+        """Re-derive ``SD203`` from the key switch and the last remote request."""
+        return publish_cpu_state(self.memory, self.state)
+
+    def cpu_state(self) -> int:
+        """What ``SD203`` holds right now: device memory, read the way a client reads it.
+
+        The register is re-derived at the top of every served request, so a key switch
+        you have just turned reaches it when the CPU next scans -- which is also what
+        silicon does, and which is why this is a plain register read rather than a call
+        to :func:`effective_cpu_state`. Call :meth:`publish_cpu_state` to advance the
+        scan yourself.
+        """
+        return self.memory.get_u16(CPU_STATUS_DEVICE, CPU_STATUS_INDEX)
+
     def handle(self, request: RawRequest, *, codec: Codec, encoding: Encoding) -> Outcome:
         """Serve one request. Never raises for a malformed one: it answers an end code."""
-        self.state.served += 1
+        self.publish_cpu_state()
+        if self.scan_per_request:
+            self.advance_scan()
         try:
             unit, spec, extension = decode_subcommand(request.subcommand)
         except SlmpCodecError:
@@ -976,6 +1138,11 @@ class Dispatcher:
         scripted = None if self.scenario is None else self.scenario.take(request.command)
         if scripted is not None:
             return scripted
+        if (
+            self.state.password_locked
+            and request.command not in PASSWORD_EXEMPT_COMMANDS
+        ):
+            return Reply(self.target.end_codes.password_locked)
         if extension:
             return Reply(self.target.end_codes.unsupported_subcommand)
         if not self.target.supports_spec(spec):
@@ -1004,18 +1171,30 @@ class Dispatcher:
         **That register is a ``REAL``**, so this is an ``f32`` bump and not a double-word
         one: the CPU's own ST is ``IO_Scan := IO_Scan + 1.0`` with ``IF IO_Scan > 1.0E7``
         (FX5U-32MT/DS fw 1.065 at 192.168.10.250, 2026-09-07). It idles at 1018 scans/s
-        with no physical I/O wired, so a client reading ``D8`` twice gets two different
-        numbers -- and a simulator whose registers never move lets a stale-value bug pass.
+        with no physical I/O wired -- the one idle rate this repository publishes, with
+        its conditions in ``docs/hardware.md`` section 17 -- so a client reading ``D8``
+        twice gets two different numbers.
+
+        **A stopped CPU does not scan**, so this returns the counter unchanged unless
+        ``SD203`` says RUN. That sentence used to be false in both directions: nothing
+        derived ``SD203`` from the remote handlers, and this method counted regardless, so
+        a Remote STOP that was answered ``0x0000`` was followed by a scan counter that
+        kept climbing -- the one oracle ``tests/hardware/test_remote_control.py`` trusts
+        over ``SD203`` itself, and the simulator could not reproduce it either way.
+
+        This method does not make a register move *while a client is talking to the
+        CPU*; only a caller calling it does, and until 2026-09-07 the only callers were
+        tests. :attr:`scan_per_request` is what buys the "registers move underneath a
+        client" property, and it is opt-in for the reason given there.
 
         This method used to call :meth:`~aslmp.testing.memory.DeviceMemory.bump_u32`,
         which made every simulator-backed test of an ``f32`` scan counter pass against a
         ``u32`` decode of it. Use :meth:`~aslmp.testing.memory.DeviceMemory.bump_u32`
         directly for a counter a CPU really declares as an integer double word.
         """
-        self.state.scan = self.memory.bump_f32(
-            device, index, step, wrap_above=wrap_above
-        )
-        return self.state.scan
+        if effective_cpu_state(self.state) != CpuRunState.RUN:
+            return self.memory.get_f32(device, index)
+        return self.memory.bump_f32(device, index, step, wrap_above=wrap_above)
 
 
 def registered_request_codes() -> tuple[int, ...]:

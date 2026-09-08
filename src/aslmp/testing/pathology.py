@@ -300,7 +300,19 @@ class Pathology:
     has given up must be dropped and counted, never returned as the next answer."""
 
     remote_run_lies: bool = False
-    """Answer Remote RUN ``0x0000`` without leaving STOP (:data:`REMOTE_RUN_LIES`)."""
+    """Answer ``1001``/``1002``/``1003`` ``0x0000`` and change nothing.
+
+    See :data:`REMOTE_RUN_LIES`. A CPU that lies about every remote command, for no
+    reason it will tell you -- distinct from the *documented* case that citation
+    describes, which this simulator now models properly: put the key switch
+    (:attr:`~aslmp.testing.dispatch.SessionState.switch_position`) in STOP and an honest
+    CPU answers a Remote RUN ``0x0000`` while ``SD203`` still reads STOP.
+
+    Until 2026-09-07 this switch could catch nothing whatever it was set to, because
+    ``SD203`` was not derived from the handlers at all: a lying CPU and an honest one
+    looked identical to every client, which is a curious property for the one pathology
+    whose stated purpose is to give ``verify=True`` something real to catch.
+    """
 
     remote_reset_no_response: bool = True
     """Send no response to Remote Reset and tear the connection down

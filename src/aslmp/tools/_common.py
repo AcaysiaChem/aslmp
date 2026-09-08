@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Coroutine, Sequence
-from typing import TYPE_CHECKING, Any, Final, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Final, NoReturn, TypeVar
 
 from aslmp.errors import SlmpError
 from aslmp.profile import Encoding, Link
@@ -38,7 +38,11 @@ __all__ = [
     "FRAMES",
     "LINKS",
     "TRANSPORTS",
+    "VALUE_KINDS",
+    "KindNotGivenError",
+    "KindRequiredParser",
     "add_connection_arguments",
+    "add_kind_argument",
     "build_client",
     "columns",
     "guarded",
@@ -50,6 +54,78 @@ __all__ = [
 ]
 
 T = TypeVar("T")
+
+VALUE_KINDS: Final[tuple[str, ...]] = (
+    "bit",
+    "i16",
+    "u16",
+    "i32",
+    "u32",
+    "f32",
+    "f64",
+    "str",
+    "words",
+    "bits",
+)
+"""What ``--as`` accepts, on **both** halves of the read/write pair.
+
+One tuple, because two were one too many. ``aslmp read --as`` offered ``bits`` and
+``aslmp write --as`` did not, so the command line could observe a run of bit devices and
+not write one, although :meth:`aslmp.client.Plc.write_bits` has existed the whole time.
+``words`` and ``bits`` are the raw batch arrays -- a comma-separated list on the write
+side, ``--count`` on the read side -- and everything else is one decoded value.
+"""
+
+
+class KindNotGivenError(Exception):
+    """``--as`` was not given. Carried out of ``argparse`` rather than exiting.
+
+    Never reaches a user: :func:`parse_or_exit` is the only thing that raises it and the
+    subcommand's ``run`` is the only thing that catches it, converting it into
+    :func:`usage`'s return-a-status form. It exists so that ``--as`` can be *declared*
+    required -- which makes ``--help`` print it without brackets -- while the refusal a
+    user reads is still the paragraph that says **why** rather than argparse's
+    "the following arguments are required: --as", and while ``run`` keeps the property
+    that it returns a status and never calls ``sys.exit``.
+    """
+
+
+class KindRequiredParser(argparse.ArgumentParser):
+    """An ``ArgumentParser`` whose usage line tells the truth about ``--as``.
+
+    Shared by ``aslmp read`` and ``aslmp write`` because the reason ``--as`` is required
+    is the same reason on both, and because for one revision it was enforced on exactly
+    one of them: ``read`` refused to guess while ``write`` defaulted to ``u16`` and put
+    the guess into the plant. ``aslmp write ... D100 60`` exited 0 having chosen an
+    interpretation on the caller's behalf, and those two registers read back as
+    ``8.407790785948902e-44`` under ``--as f32`` (FX5U-32MT/DS fw 1.065 from this host
+    over TCP 5002, 2026-09-07). The half that changes the machine is the half that must
+    not guess.
+
+    Subclasses set :attr:`WHY` to the paragraph their own command should print.
+    """
+
+    WHY: ClassVar[str] = ""
+    """Why ``--as`` is required here. Printed instead of argparse's own one-liner."""
+
+    def error(self, message: str) -> NoReturn:
+        if self.WHY and "--as" in message and "required" in message:
+            raise KindNotGivenError(self.WHY)
+        super().error(message)
+
+
+def add_kind_argument(parser: argparse.ArgumentParser, *, help: str) -> None:
+    """Add the ``--as`` option: same name, same choices, **required on both sides**.
+
+    There is no ``default`` parameter and there is nowhere to pass one, which is the
+    point. A default here is a type this library invented for a register that carries
+    none, and ``tests/unit/test_read_write_symmetry.py`` asserts that no subcommand's
+    ``--as`` action has one.
+    """
+    parser.add_argument(
+        "--as", dest="kind", choices=VALUE_KINDS, required=True, help=help
+    )
+
 
 ENCODINGS: Final[tuple[str, ...]] = tuple(member.value for member in Encoding)
 """``binary``, ``ascii-xy-oct``, ``ascii-xy-hex`` -- the CPU's own-node data code."""

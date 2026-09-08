@@ -594,14 +594,25 @@ def test_read_requires_an_explicit_type(capsys: pytest.CaptureFixture[str]) -> N
 
 def test_read_still_accepts_every_kind_it_offers() -> None:
     """Requiring --as must not have narrowed what may be asked for. No socket here: the
-    parser is asked directly, so this stays a statement about the arguments."""
+    parser is asked directly, so this stays a statement about the arguments.
+
+    The last assertion changed on 2026-09-07 and the change is the point. It used to be
+    ``parse_args([...]).kind is None`` -- the parser accepted the invocation and the body
+    refused it afterwards -- which is why ``aslmp read --help`` printed ``[--as {...}]``,
+    brackets and all, above a help string that began "REQUIRED". ``--as`` is
+    ``required=True`` in the parser now, so the refusal is where the usage line says it
+    is. The reason still reaches the user: see ``read.WHY_AS_IS_REQUIRED`` and
+    ``test_read_requires_an_explicit_type`` above, which asserts the message, not the
+    mechanism.
+    """
     from aslmp.tools import read as read_tool
 
     parser = read_tool.build_parser()
     for kind in read_tool.KINDS:
         argv = ["1.2.3.4", "D0", "--profile", "melsec:iq-f/fx5u", "--as", kind]
         assert parser.parse_args(argv).kind == kind
-    assert parser.parse_args(["1.2.3.4", "D0", "--profile", "x"]).kind is None
+    with pytest.raises(read_tool._MissingKind):
+        parser.parse_args(["1.2.3.4", "D0", "--profile", "x"])
 
 
 def test_read_refuses_a_count_for_a_scalar_kind(capsys: pytest.CaptureFixture[str]) -> None:

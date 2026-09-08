@@ -806,13 +806,17 @@ def test_write_random_holds_each_value_to_the_type_its_own_point_names() -> None
     from aslmp.commands.random import dword, word
 
     _check_point_value(RandomWrite(word("D100", kind="i16"), 32_767), 0)
-    _check_point_value(RandomWrite(word("D100", kind="u16"), -1), 0)
+    _check_point_value(RandomWrite(word("D100", kind="u16"), 65_535), 0)
     _check_point_value(RandomWrite(dword("D100", kind="f32"), 1.5), 0)
     for bad in (
         RandomWrite(word("D100", kind="i16"), 40_000),
         RandomWrite(dword("D100", kind="i32"), 3_000_000_000),
         RandomWrite(dword("D100", kind="f32"), 1e39),
         RandomWrite(word("D100", kind="u16"), 70_000),
+        # The sibling this fix left behind for a revision: a u16 point took -1 and
+        # masked it, on the mutating half of a pair whose typed door refused it.
+        RandomWrite(word("D100", kind="u16"), -1),
+        RandomWrite(dword("D100", kind="u32"), -1),
     ):
         with pytest.raises(SlmpValueRangeError):
             _check_point_value(bad, 0)

@@ -25,9 +25,10 @@ event loop for its lifetime, and a command line with eleven subcommands behind o
 
 **Our iron is one PLC.** A MELSEC iQ-F **FX5U-32MT/DS on firmware 1.065**, binary 3E and 4E,
 over TCP and UDP, in September 2026. Everything this library claims about real silicon comes
-from that one CPU, reached from two hosts: a laptop over **Wi-Fi** (~7 ms RTT) and a wired
-machine (3.64 ms RTT). Latency figures are labelled with their link, because **the link changed
-a conclusion**: on Wi-Fi, UDP won the median and TCP won the tail, and that tail was the stated
+from that one CPU, reached from two hosts: a laptop at 192.168.10.41 over **Wi-Fi** (~7 ms
+median RTT) and `argus-bench` at 192.168.10.36 on **wire** (3.64 ms median RTT). Every latency
+figure here names its host and its link, because **the link changed a conclusion**: on Wi-Fi,
+UDP won the median and TCP won the tail, and that tail was the stated
 reason TCP is the default. It did not reproduce on wire, where UDP wins at every percentile.
 The default did not change; its justification did — a UDP entry on iQ-F is point-to-point, so
 it exists only for hosts somebody configured it for. See [`docs/hardware.md`](docs/hardware.md)
@@ -139,8 +140,9 @@ connections. If you move your client to a different machine, you edit the PLC pa
 ### 4. One TCP connection is served per entry
 
 A second TCP connection to an entry that is already in use **completes its three-way handshake**
-(5.4 ms, measured) and is then immediately closed by the CPU — the incumbent connection is
-undisturbed. `socket.connect()` returns success and the connection is already dead.
+(5.4 ms, measured 2026-09-06 from the laptop at 192.168.10.41 over Wi-Fi, ~7 ms median RTT) and
+is then immediately closed by the CPU — the incumbent connection is undisturbed.
+`socket.connect()` returns success and the connection is already dead.
 
 Consequences you have to design around:
 
@@ -195,8 +197,12 @@ an independent PLC-side timestamp, which separates host scheduling jitter from P
 **That row said "61.6 µs per count" until 2026-09-07, and the number was not a scan period.**
 It was `D8` read as a `U32` — the same misread the block example below is written about — put
 through arithmetic. Read as the `f32` it is: **20,374 counts in 20.014 s = 1018.0 scans/s,
-982.3 µs per scan**, FX5U-32MT/DS fw 1.065 at 192.168.10.250, 2026-09-07, from the laptop at
-192.168.10.41 over Wi-Fi, agreeing with 1 s, 5 s and 10 s windows to 0.4 %. A scan rate is one
+982.3 µs per scan**, FX5U-32MT/DS fw 1.065 at 192.168.10.250, 2026-09-07, from `argus-bench` at
+192.168.10.36 over the wired link at 3.64 ms median RTT — and **1018.4 scans/s** from the laptop
+at 192.168.10.41 over Wi-Fi, 0.04 % away, agreeing with 1 s, 5 s and 10 s windows to 0.4 %.
+**1018 scans/s, 982 µs per scan, is the one idle scan rate this repository publishes**; every
+other scan figure in it is that number, arithmetic on it, or a pair taken inside one run, and
+`docs/hardware.md` §17 is where it lives. A scan rate is one
 of the few numbers here a link cannot move much — it is a count divided by a wall-clock window
 of seconds, so a few ms of RTT at each end is 0.03 % of a 20 s window — which is exactly why
 the old figure could not be blamed on the medium.
@@ -221,8 +227,9 @@ aslmp probe    192.168.10.250 --port 5002 --profile melsec:iq-f/fx5u
 
 `identify` needs no profile: `0x0619` and `0x0101` carry no device address, so the profile
 cannot change a byte of them. `probe` proves the entry is free, the data code matches, the
-frame type is accepted and the CPU is answering *now* — in one ~7 ms round trip with no side
-effects.
+frame type is accepted and the CPU is answering *now* — in one round trip with no side effects
+(~7 ms from the laptop at 192.168.10.41 over Wi-Fi, ~3.6 ms from `argus-bench` at
+192.168.10.36 on wire; it costs whatever one read costs on your link).
 
 ---
 
@@ -251,15 +258,15 @@ correctly. The one-in-flight rule is a TCP rule, not a universal one.
 This is the claim an outside reviewer challenged, and re-measuring showed the challenge was
 right. Both tables are real. 300 sequential 2-word reads per transport in each.
 
-**Wi-Fi, 2026-09-06**, laptop at 192.168.10.41, same minute, same host:
+**Wi-Fi, 2026-09-06**, laptop at 192.168.10.41, ~7 ms median RTT, same minute, same host:
 
 | | n | min | p50 | p90 | p99 | max | stdev |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | UDP | 300 | 3.99 | **6.20** | 7.99 | 13.80 | 24.36 | 1.79 |
 | TCP | 300 | 4.35 | 7.41 | 8.88 | **10.49** | **14.32** | **1.03** |
 
-**Wired, 2026-09-07**, `argus-bench` at 192.168.10.36, TCP/UDP interleaved so drift lands on
-both, controls before and after:
+**Wired, 2026-09-07**, `argus-bench` at 192.168.10.36, 3.64 ms median RTT, TCP/UDP interleaved
+so drift lands on both, controls before and after:
 
 | | n | min | p50 | p90 | p99 | max | sd |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -272,7 +279,8 @@ within 0.01 ms of the first.
 
 On Wi-Fi, UDP won the median and TCP won the tail, and **that tail was the published reason TCP
 is the default**. On wire UDP wins at every percentile, including the tail, at equal standard
-deviation — and the control says the run was stable to 0.01 ms at p50. The old conclusion was a
+deviation — and the control says that wired run on `argus-bench` was stable to 0.01 ms at
+p50. The old conclusion was a
 property of the radio: there, a lost datagram costs a full client timeout while TCP fast
 retransmits, and enough datagrams are lost on a radio for that to own p99. Over 600 wired UDP
 samples it never happened.
@@ -286,7 +294,8 @@ should take it explicitly.
 
 ### The UDP receive queue is a hard 32, and overflow is silent
 
-Bursts of 4E reads fired without waiting, then drained. Wired, 2026-09-07:
+Bursts of 4E reads fired without waiting, then drained. **Wired, 2026-09-07**, `argus-bench` at
+192.168.10.36, 3.64 ms median RTT:
 
 | depth | answered | rate | lost |
 | --- | --- | --- | --- |
@@ -366,7 +375,8 @@ I/O. `bench/soak.py` closes that loop from the host: one `0x0403` per cycle read
 record (SP, PV, MV, Err, scan) as one snapshot, a first-order bath model is integrated using
 **the PLC's own heater duty** as its input, and the new process value is written back to `D2`.
 
-2026-09-07, from `argus-bench` over the wired link, TCP 5002: **15,000 cycles, 30,005
+2026-09-07, from `argus-bench` at 192.168.10.36 over the **wired** link at 3.64 ms median RTT,
+TCP 5002: **15,000 cycles, 30,005
 transactions, 300.0 s at exactly 50.0 Hz, 0 errors, 0 reconnects, 0 cadence overruns**, block
 read p50 3.67 / p99 4.69 ms with p50 moving 3.72 → 3.67 ms between the first fifth of the run
 and the last. The CPU scanned at **969/s under that load against its own idle reference of
@@ -411,7 +421,8 @@ low-word-first decode, the `0x0403` and the `0x1401` — cannot.**
   A response arriving in two chunks is *not* segmentation — prefix-then-body is structural —
   so `segmented` counts reads that came back short, not chunks.
 - `TCP_NODELAY` is not a latency fix here (p50 differs by 0.32 ms and the *minimum* is lower with
-  Nagle on). It is set anyway because it costs nothing.
+  Nagle on — 2026-09-06, laptop at 192.168.10.41 over Wi-Fi, ~7 ms median RTT, which is a link
+  whose own jitter is several times that difference). It is set anyway because it costs nothing.
 - **Remote RUN, STOP and PAUSE** were driven against the CPU on 2026-09-07 and checked against
   its free-running scan counter, not just `SD203`. Leaving RUN is effectively synchronous;
   **entering RUN is not** — `SD203` still said `STOP` on the first poll in 2 of 3 cycles and
@@ -533,9 +544,9 @@ revalidate the frame per cycle, which is the whole cost `bind` is there to pay o
 large for one transaction needs `bind(..., allow_split=True)` and then returns a `Split[B]`,
 which is deliberately *not* a `B`, because its fields were not one snapshot.
 
-Measured on the bench, 2026-09-07 from the Wi-Fi laptop, n=9 of each: **7.75 ms of wire time
-for the bound block read against 38.24 ms of wall time** for the same five values as five
-separate batch reads.
+Measured on the bench 2026-09-07, from the laptop at 192.168.10.41 over **Wi-Fi** at ~7 ms
+median RTT, n=9 of each: **7.75 ms of wire time for the bound block read against 38.24 ms of
+wall time** for the same five values as five separate batch reads.
 
 **Those two columns are not the same measurement, and the ratio between them is not 4.9x
 worth of anything.** 7.75 ms is the block's `wire_ms`; 38.24 ms is a wall clock around five
@@ -584,9 +595,12 @@ Full reference: [`docs/cli.md`](docs/cli.md).
 ## Benchmarks
 
 `aslmp bench` **refuses to print a table without a same-session raw-socket control**, and the
-scripts in `bench/` do the same. This is not ceremony: the same machine and the same PLC gave
-p50 7.1 / p99 18.8 ms on one day and p50 10.3 / p99 95.2 ms on another, with nothing changed. A
-published latency number with no control beside it is not a measurement.
+scripts in `bench/` do the same. This is not ceremony: the laptop at 192.168.10.41 over **Wi-Fi**
+(~7 ms median RTT), against this same FX5U, gave p50 7.1 / p99 18.8 ms on one afternoon and p50
+10.3 / p99 95.2 ms on another, with nothing changed but the day. (The two dates were not written
+down at the time, which is why they are not printed here — and a figure whose conditions were not
+recorded is exactly the thing this section is warning you about.) A published latency number with
+no control beside it is not a measurement.
 
 The control shares no code with this library — hand-built 3E binary frames, a blocking socket,
 `struct` — and it runs twice, before and after, so the drift between the two is the honest error
@@ -688,7 +702,8 @@ exist only because somebody else found the bug first, and say so in their docstr
 - **fa-yoshinobu / plc-comm-slmp** — the closest thing to a reference implementation in Python,
   with per-model setup guides that predate ours. Its measured overhead over a raw socket is
   +0.24 ms at p50, and **we have no measurement fine enough to compare with it**: our own
-  library-against-control run was n=120 on a Wi-Fi link with sd ~1.03 ms, where the error bar
+  library-against-control run was n=120 from the laptop at 192.168.10.41 over **Wi-Fi** (~7 ms
+  median RTT) with sd ~1.03 ms, where the error bar
   on a difference of medians is around 0.17 ms. We published +0.07 ms from it once and have
   withdrawn that; what the run supports is "indistinguishable at this n".
 - **Apache PLC4X** — `ParserSerializerTestsuite.xml` seeded our golden byte-vector corpus.

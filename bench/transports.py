@@ -13,11 +13,13 @@ kernel, so borrowing TCP's would compare two different things.
 **What we measured, and the conclusion the link overturned.** FX5U-32MT/DS fw 1.065,
 300 sequential 2-word reads each way.
 
-*2026-09-06, from the laptop over Wi-Fi:* UDP p50 6.20 / p99 13.80 / stdev 1.79 and TCP
+*2026-09-06, from the laptop at 192.168.10.41 over Wi-Fi at ~7 ms median RTT:* UDP p50
+6.20 / p99 13.80 / stdev 1.79 and TCP
 p50 7.41 / p99 10.49 / stdev 1.03. UDP won the median, TCP won the tail, and that tail
 was published as the reason TCP is the default.
 
-*2026-09-07, from ``argus-bench`` over the wired link*, TCP/UDP interleaved with controls
+*2026-09-07, from ``argus-bench`` at 192.168.10.36 over the wired link at 3.64 ms median
+RTT*, TCP/UDP interleaved with controls
 before and after that drifted 0.01 ms at p50: UDP p50 2.42 / p90 3.40 / p99 3.56 / sd
 0.40 against TCP p50 3.63 / p90 4.05 / p99 4.69 / sd 0.36. **UDP wins at every
 percentile, including the tail.** The Wi-Fi tail result was a property of the radio,

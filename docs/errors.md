@@ -61,6 +61,8 @@ specification. There is a command or subcommand that cannot be used by the CPU m
   received  D0 00 00 FF FF 03 00 0B 00 59 C0 00 FF FF 03 00 01 08 00 00
   routes    requested 00/FF/03FF/00   responded 00/FF/03FF/00
   timing    7.31 ms  (gen 0, seq 12, 1 chunk, queue 0.00 ms, first byte 7.10 ms)
+            # 7.31 ms is this example's link: the laptop at 192.168.10.41 over Wi-Fi,
+            # ~7 ms median RTT. Yours will differ, which is why the block prints it.
   observed  0x0801 and 0x0802 both return 0xC059 on FX5U-32MT/DS fw 1.065, measured twice
             through independent code paths.
   action    Monitor Register / Execute Monitor are iQ-R commands. On iQ-F use read_random()

@@ -449,7 +449,8 @@ class DeviceMemory:
 
         ``wrap_above`` is the ST's own threshold; pass ``None`` for a counter that only
         climbs. ``wrap_to`` is what the simulator resumes from and is a **choice, not a
-        measurement** -- 1.0e7 counts at the measured 1018 scans/s is about 2.7 hours, so
+        measurement** -- 1.0e7 counts at the measured 1018 scans/s (``docs/hardware.md``
+        section 17) is about 2.7 hours, so
         the reset has never been seen on a wire. No test may assert the value the counter
         resumes from; assert that it dropped.
 

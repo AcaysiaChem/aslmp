@@ -8,12 +8,22 @@ fall back to. The second is that the tables in ``aslmp/data/`` actually carry wh
 claim to -- every row a manual, a revision and a section, or else a CPU model and a
 firmware version. These tests force *presence* and *shape*; they cannot force truth,
 which is stated plainly as a residual weakness in DESIGN section 7.
+
+The third arrived on 2026-09-07 and is at the bottom of this file: the numbers this
+repository publishes in **prose**. A measurement in a TSV has a schema and a test; the
+same measurement in a README has neither, which is why both claims this project has had
+to withdraw were prose, and why one scan rate reached four files and three different
+values before anyone noticed. Those tests derive one figure from the one row that
+measured it and hold every other appearance of it against that -- so a document cannot
+disagree with itself, and a sibling left behind fails the suite rather than waiting for
+the next review.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -885,3 +895,460 @@ def test_unverified_md_still_says_which_profile_is_the_measured_one() -> None:
     )
     assert "melsec:iq-f/fx5u" in page
     assert FX5U in page, "the page must name the CPU the measured profile rests on"
+
+
+# ======================================================================================
+# The numbers the documents publish
+# ======================================================================================
+#
+# Everything above this line defends a fact that lives in a TSV, where a test can reach
+# it. These defend the facts that live in prose, which is where this project has twice
+# published something it had to withdraw -- and where, both times, the fix landed on the
+# instance and left the siblings. A number in a README is not typed, not executed and not
+# imported by anything, so nothing but a test like this one can notice when one copy of
+# it moves and the other four do not.
+#
+# The rule these enforce: a measured quantity has ONE source, every other appearance of
+# it is derived from that source or cites it, and a figure that names no conditions is
+# not a measurement.
+
+REPO = Path(__file__).resolve().parents[2]
+HARDWARE_MD = REPO / "docs" / "hardware.md"
+
+IDLE_SCAN_ROW = re.compile(
+    r"^\|\s*20 s\s*\|\s*\*\*([\d,]+)\*\*\s*\|\s*([\d.]+)\s*\|\s*\*\*([\d.]+)\*\*\s*\|",
+    re.MULTILINE,
+)
+"""The 20 s row of ``docs/hardware.md`` section 17: counts, seconds, scans/s.
+
+Parsed rather than retyped, so this test cannot disagree with the document it is
+policing. If the row is reformatted this fails loudly, which is the correct outcome:
+the row is a published measurement and its shape is part of what is published.
+"""
+
+SCAN_FIGURE = re.compile(
+    r"(?<![\w.])(\d{3,4}(?:\.\d+)?)(?!\d)"
+    r"(?:\s*(?:\w+\s+){0,2}(?:scans?|counts?)\s*/\s*s|\s*/\s*s)(?![\w/])"
+)
+"""A scan rate written out: ``1018 scans/s``, ``969/s``, ``1018 real counts/s``.
+
+Anchored on the unit rather than on the number, so ``1024`` device points and a
+``window: int = 1024`` are invisible to it and a rate is not. ``405 txn/s`` is a
+transaction rate and not a scan rate, so it is invisible too: the unit has to be a scan
+or a count, or else the number has to sit directly against the ``/s``.
+"""
+
+SCAN_PERIOD = re.compile(
+    r"(?<![\w.])(\d{1,4}(?:\.\d+)?)\s*(?:us|µs)\s+per\s+(?:scan|count)"
+)
+"""``982 us per scan``, ``982.3 us per scan``, ``61.6 us per count``."""
+
+SCAN_RATE_CONSTANT = re.compile(
+    r"^\s*([A-Z][A-Z0-9_]*SCAN_RATE[A-Z0-9_]*)\s*(?::[^=]+)?=\s*([\d_]+(?:\.\d+)?)\s*$",
+    re.MULTILINE,
+)
+"""A named constant that *is* the scan rate, e.g. ``IDLE_SCAN_RATE_HZ = 1018.0``.
+
+The literal a test asserts against has no unit beside it, so :data:`SCAN_FIGURE` cannot
+see it -- and that literal is the one that matters most, because it is the only copy of
+this number the *code* depends on. ``expected = 1024 * 2.0`` in
+``tests/hardware/test_fx5u.py`` was exactly that: a figure the repository carried in
+prose, promoted to an assertion, and 1 % away from the measurement.
+"""
+
+PUBLISHED_SCAN_RATES = {"1018", "1018.0", "1018.4"}
+"""The one published idle rate, and the two host figures it is the round number of.
+
+``docs/hardware.md`` section 17 carries the conditions. Nothing else may introduce a
+fourth spelling of this quantity.
+"""
+
+RUN_LOCAL_SCAN_RATES = {
+    "969": "1029",
+    "1029": "969",
+    "997": "1018",
+}
+"""Loaded/idle pairs that belong to ONE run, and the partner each may not be split from.
+
+969 against 1029 is the wired five-minute soak; 997 against 1018 is the Wi-Fi run of the
+shipped script. A cost-of-polling percentage is a ratio of two scan rates, so quoting
+either half alone turns a within-run reference into a repository-wide claim -- which is
+exactly how 1029 came to be published as an idle scan rate in two test modules and a
+bench script.
+"""
+
+RETRACTION_MARKERS = (
+    "until 2026",
+    "withdrawn",
+    "used to",
+    "earlier note",
+    "never a measurement",
+    "was ",
+    "said ~",
+    "said 1029",
+    "printed",
+    "residue",
+    "retired",
+    "disagree",
+    "spread",
+    "carried ~1024",
+    "reconciled",
+    "drift",
+    "stale",
+)
+"""Words that mark a number as history rather than as a claim.
+
+A withdrawn figure has to stay quotable -- this project's whole argument is that saying
+what you got wrong is worth more than the wrong answer was -- so it may appear, but only
+where the surrounding lines say it is not the answer.
+"""
+
+PROSE_FILES = (
+    "README.md",
+    "CHANGELOG.md",
+    "docs/architecture.md",
+    "docs/benchmarking.md",
+    "docs/cli.md",
+    "docs/errors.md",
+    "docs/hardware.md",
+    "docs/unverified.md",
+    "bench/_report.py",
+    "bench/access_patterns.py",
+    "bench/soak.py",
+    "bench/transports.py",
+    "tests/hardware/test_fx5u.py",
+    "tests/hardware/test_remote_control.py",
+)
+"""Everything a reader meets a number in, outside the package itself."""
+
+HOST_TOKENS = ("192.168.10.41", "192.168.10.36", "argus-bench")
+MEDIUM_TOKENS = ("wi-fi", "wifi", "wired", "radio")
+"""The two conditions a latency figure must name.
+
+Not the CPU and not the date, which were already required: the host and the medium are
+the two whose absence cost this project a published claim (``A-UDP-TAIL-LATENCY``), and
+naming them is the rule ``docs/benchmarking.md`` adopted in writing afterwards.
+"""
+
+LATENCY_COLUMN = re.compile(r"\bp50\b|\bp99\b|\bp90\b|\bstdev\b", re.IGNORECASE)
+"""A Markdown header row that makes the table below it a latency table."""
+
+PERCENTILE_CLAIM = re.compile(
+    r"\bp(?:50|90|99)\b[^|\n]{0,3}?(?<![\w.])\d+\.\d+"
+    r"|(?<![\w.])[-+]?\d+\.\d+\s*ms\b[^|\n]{0,24}?\bat p(?:50|90|99)\b"
+)
+"""A percentile with an actual number against it, in running text.
+
+Deliberately not every mention of ``p50``: a column heading, an f-string that formats one
+at run time, and a sentence about what percentiles are for are not claims about this
+bench. ``p50 3.67`` and ``+0.07 ms at p50`` are.
+"""
+
+
+def prose_sources() -> Iterator[tuple[str, str]]:
+    """(path, text) for every document and script that carries published numbers."""
+    for name in PROSE_FILES:
+        path = REPO / name
+        assert path.is_file(), f"{name} is in PROSE_FILES and does not exist"
+        yield name, path.read_text(encoding="utf-8")
+
+
+def package_sources() -> Iterator[tuple[str, str]]:
+    """(path, text) for every module of the package itself."""
+    for path in sorted((REPO / "src" / "aslmp").rglob("*.py")):
+        yield path.relative_to(REPO).as_posix(), path.read_text(encoding="utf-8")
+
+
+def near(lines: Sequence[str], index: int, radius: int = 4) -> str:
+    """The window a marker or a partner number is allowed to live in, lower-cased."""
+    return "\n".join(lines[max(0, index - radius) : index + radius + 1]).lower()
+
+
+TABLE_RULE = re.compile(r"^\|[\s:|-]+\|\s*$")
+"""The ``| --- | --- |`` line, which is what makes the row above it a header."""
+
+
+def markdown_tables(lines: Sequence[str]) -> Iterator[tuple[int, list[str]]]:
+    """(header line number, every line of the table) for each Markdown table.
+
+    A table is judged as a whole and attributed to its **header**, because that is where
+    its caption is. Judging each row separately attributes a ``p50`` on the fourth row of
+    a table to a caption walk that stops at the third row, which finds nothing -- and a
+    latency figure that is simply lower down a table is not less of a claim.
+    """
+    index = 0
+    while index < len(lines) - 1:
+        if lines[index].startswith("|") and TABLE_RULE.match(lines[index + 1]):
+            end = index + 2
+            while end < len(lines) and lines[end].startswith("|"):
+                end += 1
+            yield index, list(lines[index:end])
+            index = end
+            continue
+        index += 1
+
+
+def caption_of(lines: Sequence[str], header: int) -> list[str]:
+    """The prose between a table's header row and whatever precedes it.
+
+    Bounded by the previous table rather than by a fixed line count, because a fixed
+    count lets a table inherit its neighbour's caption: ``README.md`` prints the Wi-Fi
+    and the wired transport comparisons seven lines apart, and a window wide enough to
+    reach the second one's own caption also reaches the first one's host.
+    """
+    start = header
+    while start > 0 and header - start < 15:
+        if lines[start - 1].lstrip().startswith("|"):
+            break
+        start -= 1
+    return list(lines[start : header + 1])
+
+
+def published_idle_scan_rate() -> float:
+    """The one idle scan rate, derived from the one row that measured it.
+
+    counts / seconds, checked against the rate the row itself prints. Deriving rather
+    than reading is the point: the document cannot disagree with its own arithmetic.
+    """
+    matches = IDLE_SCAN_ROW.findall(HARDWARE_MD.read_text(encoding="utf-8"))
+    assert len(matches) == 1, (
+        f"docs/hardware.md must carry exactly one 20 s scan-counter row; found "
+        f"{len(matches)}. That row is the source every other scan figure in this "
+        f"repository is checked against."
+    )
+    counts, seconds, printed = matches[0]
+    derived = int(counts.replace(",", "")) / float(seconds)
+    assert abs(derived - float(printed)) / derived < 0.001, (
+        f"docs/hardware.md section 17 says {counts} counts in {seconds} s and prints "
+        f"{printed} scans/s, but {counts}/{seconds} is {derived:.1f}. The table "
+        f"disagrees with its own arithmetic."
+    )
+    return derived
+
+
+def test_the_published_scan_rate_is_derived_from_its_own_measurement() -> None:
+    """The source row divides out to the rate it prints, to a tenth of a percent."""
+    assert 1000.0 < published_idle_scan_rate() < 1040.0
+
+
+def test_no_scan_rate_literal_drifts_from_the_published_one() -> None:
+    """Every scan rate in the tree is the published figure, or a pair, or history.
+
+    This is the test the third adversarial round asked for. The repository carried
+    ~1024, ~1029 and 1018 for one quantity across four files; the pass that reconciled
+    them wrote in ``docs/hardware.md`` section 17 that ``bench/soak.py``,
+    ``tests/hardware/*`` and ``aslmp.testing`` were "not touched by this sweep" and
+    "should be reconciled when the file is next opened". That sentence is a promise, and
+    a promise is what this project keeps discovering it made instead of a fix. This is
+    the fix: a fourth spelling of the idle scan rate fails the suite.
+
+    Three ways to pass, and no fourth:
+
+    * the published figure, ``1018`` (or the two host figures it rounds, 1018.0 wired
+      and 1018.4 over Wi-Fi);
+    * a loaded/idle pair belonging to one run, with its partner within four lines --
+      because a cost-of-polling percentage inherits both of its endpoints and neither
+      half means anything alone;
+    * a retracted figure standing next to a word that says it is retracted.
+
+    A named ``*_SCAN_RATE_*`` constant gets a fourth, stricter treatment: it must equal
+    the measurement outright. It has no unit beside it for :data:`SCAN_FIGURE` to find,
+    and it is the only copy of this number that anything *executes*.
+    """
+    rate = published_idle_scan_rate()
+    rounded = f"{rate:.0f}"
+    assert rounded in PUBLISHED_SCAN_RATES, (
+        f"{rounded} is derived from docs/hardware.md section 17 but is not in "
+        f"PUBLISHED_SCAN_RATES; the test and the document have come apart"
+    )
+
+    problems: list[str] = []
+    for name, text in list(prose_sources()) + list(package_sources()):
+        for constant, value in SCAN_RATE_CONSTANT.findall(text):
+            if abs(float(value.replace("_", "")) - rate) > 0.5:
+                problems.append(
+                    f"{name}: {constant} = {value}, against the {rate:.1f} scans/s "
+                    f"docs/hardware.md section 17 measures. A constant is the one copy "
+                    f"of this number the code depends on."
+                )
+        lines = text.splitlines()
+        for number, line in enumerate(lines):
+            for value in SCAN_FIGURE.findall(line):
+                if value in PUBLISHED_SCAN_RATES:
+                    continue
+                window = near(lines, number)
+                partner = RUN_LOCAL_SCAN_RATES.get(value)
+                if partner is not None and partner in window:
+                    continue
+                if any(marker in window for marker in RETRACTION_MARKERS):
+                    continue
+                problems.append(
+                    f"{name}:{number + 1}: {value}/s. The published idle scan rate is "
+                    f"{rounded}/s (docs/hardware.md section 17). A different number is "
+                    f"allowed only as half of a named within-run pair, with its partner "
+                    f"beside it, or as history with a word that says so."
+                )
+    assert not problems, "scan rates that have drifted:\n  " + "\n  ".join(problems)
+
+
+def test_every_scan_period_is_arithmetic_on_the_published_rate() -> None:
+    """``982 us per scan`` is ``1e6 / 1018``, and nothing else is.
+
+    ``61.6 us per count`` shipped in the README's register map for a day, looking exactly
+    like a specification. It was the ``U32`` misread's arithmetic residue -- the
+    bit-pattern step of an f32 at the value the counter stood at -- and it is the reason
+    this test exists rather than a review checklist. A period is now checked against the
+    rate at whatever precision it is quoted to, so it cannot be typed independently.
+    """
+    expected = 1e6 / published_idle_scan_rate()
+    problems: list[str] = []
+    for name, text in list(prose_sources()) + list(package_sources()):
+        lines = text.splitlines()
+        for number, line in enumerate(lines):
+            for value in SCAN_PERIOD.findall(line):
+                decimals = len(value.partition(".")[2])
+                if abs(float(value) - round(expected, decimals)) < 10**-decimals:
+                    continue
+                if any(marker in near(lines, number) for marker in RETRACTION_MARKERS):
+                    continue
+                problems.append(
+                    f"{name}:{number + 1}: {value} us per scan, against "
+                    f"1e6/{published_idle_scan_rate():.1f} = {expected:.1f}"
+                )
+    assert not problems, "scan periods that are not arithmetic on the rate:\n  " + "\n  ".join(
+        problems
+    )
+
+
+def test_every_file_that_quotes_a_scan_figure_cites_where_it_came_from() -> None:
+    """A number a reader cannot trace is a number nobody can check.
+
+    Four files carried an idle scan rate as a bare fact of their own, and that is how
+    three of them ended up disagreeing: nothing tied any of them to a measurement, so
+    nothing noticed when one moved. Every one of them now names ``docs/hardware.md``
+    section 17, which is the single place the rate and its conditions live.
+    """
+    problems: list[str] = []
+    for name, text in list(prose_sources()) + list(package_sources()):
+        if name == "docs/hardware.md":
+            continue  # it IS the citation
+        if not (SCAN_FIGURE.search(text) or SCAN_PERIOD.search(text)):
+            continue
+        lowered = text.lower()
+        if "section 17" in lowered or "§17" in lowered or "§ 17" in lowered:
+            continue
+        problems.append(name)
+    assert not problems, (
+        "these quote a scan figure without citing docs/hardware.md section 17, which is "
+        "where the measurement and its conditions live:\n  " + "\n  ".join(problems)
+    )
+
+
+def test_every_latency_table_names_its_host_and_its_medium() -> None:
+    """The rule this project adopted in writing, applied to its own front door.
+
+    ``docs/benchmarking.md``: "a latency table that does not name its link is not
+    reproducible, no matter how good its control is. Name the host, the medium and the
+    median RTT." That was written after withdrawing "TCP wins the tail", a claim that was
+    correctly measured on one link and published as a property of the protocol. It was
+    then not applied to the README's own tables, to the two-afternoon table that is the
+    argument for demanding a control at all, or to the UDP queue ladder.
+
+    A table counts as labelled if a host token and a medium token appear in its caption
+    -- the prose between its header row and the end of whatever came before it, up to
+    fifteen lines (:func:`caption_of`).
+    """
+    problems: list[str] = []
+    for name, text in prose_sources():
+        if not name.endswith(".md"):
+            continue
+        lines = text.splitlines()
+        for header, table in markdown_tables(lines):
+            if not any(LATENCY_COLUMN.search(row) for row in table):
+                continue
+            caption = "\n".join(caption_of(lines, header)).lower()
+            if not any(host in caption for host in HOST_TOKENS):
+                problems.append(f"{name}:{header + 1}: latency table with no host")
+            elif not any(medium in caption for medium in MEDIUM_TOKENS):
+                problems.append(f"{name}:{header + 1}: latency table with no medium")
+    assert not problems, "latency tables missing their conditions:\n  " + "\n  ".join(problems)
+
+
+def test_every_percentile_claim_in_prose_names_its_host_and_its_medium() -> None:
+    """The same rule off the tables, which is where most of them actually were.
+
+    ``p50 7.1 / p99 18.8 ms on one day and p50 10.3 / p99 95.2 ms on another`` appeared in
+    three files -- ``README.md``, ``docs/benchmarking.md`` and ``bench/_report.py`` -- as
+    the project's own argument for never publishing a latency number without a control,
+    and named neither host nor link in any of them.
+    """
+    problems: list[str] = []
+    for name, text in prose_sources():
+        lines = text.splitlines()
+        for number, line in enumerate(lines):
+            if line.lstrip().startswith("|") or not PERCENTILE_CLAIM.search(line):
+                continue
+            window = near(lines, number, radius=12)
+            if not any(host in window for host in HOST_TOKENS):
+                problems.append(f"{name}:{number + 1}: a p50 with no host")
+            elif not any(medium in window for medium in MEDIUM_TOKENS):
+                problems.append(f"{name}:{number + 1}: a p50 with no medium")
+    assert not problems, "percentile claims missing their conditions:\n  " + "\n  ".join(
+        problems
+    )
+
+
+def test_no_option_help_claims_a_requirement_its_parser_does_not_enforce() -> None:
+    """``aslmp read`` printed ``[--as {...}]`` above a help string beginning "REQUIRED".
+
+    The brackets are argparse saying optional. The word was the author saying otherwise,
+    and the exit status agreed with the author -- so the usage line, the only part of
+    that a hurried reader parses, was the part that was false. It is the same defect as a
+    docstring that contradicts its code, in the command the same session had just made
+    required.
+
+    ``--length``'s "required for --as str" is a conditional and is not caught: the
+    pattern only fires on an unqualified claim about the option itself.
+    """
+    from aslmp.tools import SUBCOMMANDS
+
+    claim = re.compile(r"\brequired\b(?!\s+(?:for|when|if|with|only|wherever))", re.I)
+    problems: list[str] = []
+    for command in SUBCOMMANDS:
+        module = import_module(f"aslmp.tools.{command.replace('-', '_')}")
+        builder = getattr(module, "build_parser", None)
+        if builder is None:
+            continue
+        for action in builder()._actions:
+            if not action.option_strings or not action.help:
+                continue
+            if claim.search(action.help) and not action.required:
+                problems.append(
+                    f"aslmp {command} {action.option_strings[0]}: help calls it "
+                    f"required, argparse does not"
+                )
+    assert not problems, "help strings argparse contradicts:\n  " + "\n  ".join(problems)
+
+
+def test_the_typed_flag_is_required_in_the_parser_on_both_halves_of_the_pair() -> None:
+    """``read`` and ``write`` both, because the pair is how this keeps happening.
+
+    ``--as`` was made required on ``aslmp read`` with the reasoning that "a register
+    carries no type on the wire, so there is no default that could be right" -- and left
+    defaulting to ``u16`` on ``aslmp write``, the half that moves a machine. Requiring it
+    in the parser rather than in the body is what makes the usage line true; asserting
+    both here is what stops the next one being fixed alone.
+    """
+    from aslmp.tools import read as read_tool
+    from aslmp.tools import write as write_tool
+
+    parsers = (("read", read_tool.build_parser()), ("write", write_tool.build_parser()))
+    for label, parser in parsers:
+        action = next(a for a in parser._actions if "--as" in a.option_strings)
+        assert action.required, f"aslmp {label}: --as must be required in the parser"
+        usage_line = parser.format_usage()
+        assert "--as {" in usage_line, f"aslmp {label}: usage line does not show --as"
+        assert "[--as" not in usage_line, (
+            f"aslmp {label}: the usage line brackets --as, which means optional, and it "
+            f"is not"
+        )

@@ -58,6 +58,7 @@ from aslmp.blocks.fields import (
     PointKind,
     check_reading,
     number_spec,
+    refuse_write,
 )
 from aslmp.commands.base import (
     AddressLike,
@@ -66,6 +67,8 @@ from aslmp.commands.base import (
     EncodeContext,
     WordOrder,
     boolean,
+    codec_name,
+    decoded,
     encoded,
     real,
     signed,
@@ -337,7 +340,8 @@ class PlcClockSource:
     that wrote it, ``D8`` is a ``REAL``: the CPU's own ST is ``IO_Scan := IO_Scan + 1.0``.
     So ``tx.plc_clock`` published the float's **bit pattern**, which rises monotonically
     for positive floats and is therefore a plausible, useless counter -- 1018 real
-    counts/s were reported as 16274, and that 16x is not even constant, because the
+    counts/s (``docs/hardware.md`` section 17, the one place that rate is measured) were
+    reported as 16274, and that 16x is not even constant, because the
     ulp-step of a REAL halves at every power of two
     (:data:`~aslmp.blocks.fields.IMPLAUSIBLE_VALUE_FINDING`; measured again on
     FX5U-32MT/DS fw 1.065 from this host over TCP 5002, 2026-09-07:
@@ -1476,17 +1480,34 @@ class Plc:
     async def read_str(
         self, address: AddressLike, /, *, length: int, encoding: str = "ascii"
     ) -> str:
-        """``length`` characters packed two per register, trimmed at the first NUL.
+        """``length`` **bytes** packed two per register, trimmed at the first NUL.
 
-        ``length`` is required and is in characters. A string region has no in-band
-        length, so the alternatives to naming it are reading a fixed maximum -- which
-        returns the next field's bytes -- or scanning for a NUL, which is a second round
-        trip whose answer can change between the two.
+        ``length`` is required and is a count of BYTES, not of characters. It said
+        "characters" here and in :meth:`write_str` for three revisions and was the byte
+        window in every implementation, which is exactly how a ``shift_jis`` pair got cut
+        in half: ``read_str('D110', length=3, encoding='shift_jis')`` over two registers
+        holding ``0xA082 0xA282`` raised a bare ``UnicodeDecodeError`` (measured on
+        FX5U-32MT/DS fw 1.065 from this host over TCP 5002, 2026-09-07). For ``ascii``
+        and every other single-byte codec the two counts are the same number, which is
+        why the wrong word survived. The window is now named for what it is and the cut
+        is refused by :func:`~aslmp.commands.base.decoded` rather than escaping as a
+        Python exception.
+
+        ``length`` is required for the same reason ``--as`` is. A string region has no
+        in-band length, so the alternatives to naming it are reading a fixed maximum --
+        which returns the next field's bytes -- or scanning for a NUL, which is a second
+        round trip whose answer can change between the two.
+
+        The codec name is checked **before** the request is built, so a typo costs no
+        round trip -- the same point in the call the write half has always checked it at.
         """
         count = _string_words(length)
+        what = f"read_str({address}, length={length})"
+        codec_name(encoding, what=what)
         words, tx = await self._run(ReadWords(address, count), mutates=False)
         raw = struct.pack(f"<{len(words)}H", *words)[:length]
-        return self._done(raw.split(b"\x00", 1)[0].decode(encoding), tx)
+        text = decoded(raw.split(b"\x00", 1)[0], encoding=encoding, what=what)
+        return self._done(text, tx)
 
     @mirrored
     async def write_bit(
@@ -1502,10 +1523,24 @@ class Plc:
 
     @mirrored
     async def write_i16(
-        self, address: AddressLike, value: int, /, *, verify: bool = False
+        self,
+        address: AddressLike,
+        value: int,
+        /,
+        *,
+        minimum: float | None = None,
+        maximum: float | None = None,
+        verify: bool = False,
     ) -> None:
-        """One register from a signed 16-bit integer. Never masked, never clamped."""
+        """One register from a signed 16-bit integer. Never masked, never clamped.
+
+        ``minimum``/``maximum`` are the same declared range :meth:`read_i16` holds a
+        reading to, enforced here **before** anything is sent. See :meth:`write_f32`.
+        """
         word = unsigned(value, bits=16, what=f"write_i16({address})", signed_field=True)
+        _check_writing(
+            value, minimum, maximum, field="write_i16", kind="i16", address=address
+        )
         _written, tx = await self._run(WriteWords(address, (word,)), mutates=True)
         if verify:
             back = await self.read_i16(address)
@@ -1514,10 +1549,24 @@ class Plc:
 
     @mirrored
     async def write_u16(
-        self, address: AddressLike, value: int, /, *, verify: bool = False
+        self,
+        address: AddressLike,
+        value: int,
+        /,
+        *,
+        minimum: float | None = None,
+        maximum: float | None = None,
+        verify: bool = False,
     ) -> None:
-        """One register from an unsigned 16-bit integer."""
+        """One register from an unsigned 16-bit integer.
+
+        ``minimum``/``maximum`` are the same declared range :meth:`read_u16` holds a
+        reading to, enforced here **before** anything is sent. See :meth:`write_f32`.
+        """
         word = unsigned(value, bits=16, what=f"write_u16({address})", signed_field=False)
+        _check_writing(
+            value, minimum, maximum, field="write_u16", kind="u16", address=address
+        )
         _written, tx = await self._run(WriteWords(address, (word,)), mutates=True)
         if verify:
             back = await self.read_u16(address)
@@ -1532,12 +1581,21 @@ class Plc:
         /,
         *,
         word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
         verify: bool = False,
     ) -> None:
-        """Two registers from a signed 32-bit integer."""
+        """Two registers from a signed 32-bit integer.
+
+        ``minimum``/``maximum`` are the same declared range :meth:`read_i32` holds a
+        reading to, enforced here **before** anything is sent. See :meth:`write_f32`.
+        """
         order = self._order(word_order)
         words = _to_words(struct.pack("<I", _fits(value, signed_field=True, address=address)),
                           order)
+        _check_writing(
+            value, minimum, maximum, field="write_i32", kind="i32", address=address
+        )
         _written, tx = await self._run(WriteWords(address, words), mutates=True)
         if verify:
             read_back = await self.read_i32(address, word_order=order)
@@ -1552,12 +1610,21 @@ class Plc:
         /,
         *,
         word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
         verify: bool = False,
     ) -> None:
-        """Two registers from an unsigned 32-bit integer."""
+        """Two registers from an unsigned 32-bit integer.
+
+        ``minimum``/``maximum`` are the same declared range :meth:`read_u32` holds a
+        reading to, enforced here **before** anything is sent. See :meth:`write_f32`.
+        """
         order = self._order(word_order)
         words = _to_words(struct.pack("<I", _fits(value, signed_field=False, address=address)),
                           order)
+        _check_writing(
+            value, minimum, maximum, field="write_u32", kind="u32", address=address
+        )
         _written, tx = await self._run(WriteWords(address, words), mutates=True)
         if verify:
             read_back = await self.read_u32(address, word_order=order)
@@ -1572,11 +1639,28 @@ class Plc:
         /,
         *,
         word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
         verify: bool = False,
     ) -> None:
-        """Two registers from one IEEE-754 single, low word first."""
+        """Two registers from one IEEE-754 single, low word first.
+
+        ``minimum`` and ``maximum`` are the write-side half of :meth:`read_f32`'s
+        plausibility bounds: the same declared range, judged **before** anything is sent,
+        raising :class:`~aslmp.errors.SlmpValueRangeError` rather than the read's
+        :class:`~aslmp.blocks.fields.SlmpImplausibleValueError` because here there is
+        nothing to answer. A bound is a statement about what may be in that register and
+        a write is the other way something gets there -- which is why a *block* field has
+        had both directions since bounds existed, and why this per-call form having only
+        the read half was the same defect one door along. Nothing is clamped to fit: a
+        setpoint quietly pulled back to the top of its range is a different setpoint
+        written to the plant.
+        """
         order = self._order(word_order)
         packed = struct.pack("<f", real(value, bits=32, what=f"write_f32({address})"))
+        _check_writing(
+            value, minimum, maximum, field="write_f32", kind="f32", address=address
+        )
         _written, tx = await self._run(
             WriteWords(address, _to_words(packed, order)), mutates=True
         )
@@ -1594,12 +1678,21 @@ class Plc:
         /,
         *,
         word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
         verify: bool = False,
     ) -> None:
-        """Four registers from one IEEE-754 double."""
+        """Four registers from one IEEE-754 double.
+
+        ``minimum``/``maximum`` are the same declared range :meth:`read_f64` holds a
+        reading to, enforced here **before** anything is sent. See :meth:`write_f32`.
+        """
         order = self._order(word_order)
         packed = struct.pack("<d", real(value, bits=64, what=f"write_f64({address})"))
         words = _to_words(packed, order)
+        _check_writing(
+            value, minimum, maximum, field="write_f64", kind="f64", address=address
+        )
         _written, tx = await self._run(WriteWords(address, words), mutates=True)
         if verify:
             read_back = await self.read_f64(address, word_order=order)
@@ -1617,7 +1710,12 @@ class Plc:
         encoding: str = "ascii",
         verify: bool = False,
     ) -> None:
-        """``length`` characters, NUL padded, two per register.
+        """``length`` **bytes**, NUL padded, two per register.
+
+        ``length`` is a count of BYTES, not of characters, and always was: the comparison
+        below is against ``len(raw)``, the encoded length. It is named for that now, on
+        both halves of the pair -- see :meth:`read_str`, where the same wrong word cut a
+        ``shift_jis`` character in half on the way back.
 
         A string longer than ``length`` raises rather than being truncated to fit: a
         silently shortened part number is a wrong part number.
@@ -1628,6 +1726,10 @@ class Plc:
         (:func:`~aslmp.commands.base.encoded`) rather than as the bare
         ``AttributeError``, ``UnicodeEncodeError`` or ``LookupError`` that
         ``value.encode(encoding)`` used to let out of a write path.
+        :meth:`read_str` now refuses the mirror-image failures through
+        :func:`~aslmp.commands.base.decoded`; it did not when this paragraph was written,
+        which is the whole reason the enforcement test in
+        ``tests/unit/test_read_write_symmetry.py`` exists.
         """
         raw = encoded(value, encoding=encoding, what=f"write_str({address})")
         if len(raw) > length:
@@ -1775,9 +1877,13 @@ class Plc:
 
         Each value is held to the type **its own point names**: an ``i16`` point given
         40000 raises rather than putting ``0x9C40`` on the wire for the PLC to read back
-        as ``-25536``, exactly as :meth:`write_i16` does. A ``u16`` point is the raw
-        register a point of that kind has always been, so ``-1`` is still its two's
-        complement there.
+        as ``-25536``, exactly as :meth:`write_i16` does. A ``u16`` point given ``-1``
+        raises too, exactly as :meth:`write_u16` does -- it did not until the pair was
+        looked at together. ``RandomWrite(word('D101', kind='u16'), -1)`` masked to
+        ``0xFFFF`` and this method sent it, and ``D101`` read back 65535 on the bench
+        (FX5U-32MT/DS fw 1.065 from this host over TCP 5002, 2026-09-07) from a call the
+        typed door refuses outright. The raw-register door, where ``-1`` and ``65535``
+        are the same sixteen bits, is :meth:`write_words`, and it is the only one.
         """
         checked = tuple(writes)
         for index, item in enumerate(checked):
@@ -2316,6 +2422,48 @@ class RemoteControl:
 # ========================================================================================
 
 
+def _check_writing(
+    value: float,
+    minimum: float | None,
+    maximum: float | None,
+    *,
+    field: str,
+    kind: str,
+    address: AddressLike,
+) -> None:
+    """Hold one value about to be sent to the bounds a caller passed. Sends nothing.
+
+    The write-side twin of :func:`~aslmp.blocks.fields.check_reading`, and it exists
+    because that function had no twin: ``read_f32("D2", minimum=0, maximum=100)`` refused
+    an implausible reading while ``write_f32("D2", 1e6)`` had no way to say the same
+    thing, on the half that changes the plant. A block field has had both directions
+    since bounds were introduced (:func:`aslmp.blocks.plan._refuse_out_of_range`); the
+    per-call form had only one, which is the asymmetry
+    ``tests/unit/test_read_write_symmetry.py`` now enforces for every typed pair.
+
+    Same range, opposite error class, deliberately.
+    :class:`~aslmp.errors.SlmpValueRangeError` here, because nothing was sent and the
+    caller's own value is what is wrong;
+    :class:`~aslmp.blocks.fields.SlmpImplausibleValueError` on the read, because the CPU
+    answered ``0x0000`` and the disagreement is between the registers and the
+    declaration. Both are what the block path already raises in the two directions.
+
+    Returns immediately when neither bound was given, which is what this costs every
+    caller who does not use the feature: one call and two ``is None`` tests.
+    """
+    if minimum is None and maximum is None:
+        return
+    # Bounds.__post_init__ is the one table for "that declaration cannot fire": a NaN
+    # bound, a non-number, minimum above maximum. The read path open-codes the same
+    # three refusals inside check_reading(); test_read_write_symmetry.py asserts that
+    # both doors refuse the same malformed declarations, so the two cannot drift.
+    limits = Bounds(minimum, maximum)
+    if limits.excludes(value):
+        raise refuse_write(
+            field=field, label=kind, bounds=limits, value=value, address=str(address)
+        )
+
+
 def _check_point_value(write: RandomWrite, index: int) -> None:
     """Hold one ``1402`` value to the type its own access point names. Sends nothing.
 
@@ -2361,10 +2509,17 @@ def _fits(value: object, *, signed_field: bool, address: AddressLike) -> int:
 
 
 def _string_words(length: int) -> int:
-    """Registers needed for ``length`` characters, two per register."""
+    """Registers needed for ``length`` **bytes**, two per register.
+
+    Bytes, not characters, on both halves of the pair: this is the arithmetic
+    :meth:`Plc.read_str` slices its response with and :meth:`Plc.write_str` measures its
+    encoded value against, and it was documented as characters in both while being
+    neither.
+    """
     if not isinstance(length, int) or isinstance(length, bool) or length < 1:
         raise SlmpConfigurationError(
-            f"a string length is a positive count of characters, not {length!r}."
+            f"a string length is a positive count of bytes (two per register), not "
+            f"{length!r}."
         )
     return (length + 1) // 2
 

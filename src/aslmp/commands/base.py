@@ -88,6 +88,8 @@ __all__ = [
     "EncodeContext",
     "WordOrder",
     "boolean",
+    "codec_name",
+    "decoded",
     "encoded",
     "expect_empty_payload",
     "expect_payload_len",
@@ -584,6 +586,74 @@ def boolean(value: object, *, what: str) -> bool:
     )
 
 
+def codec_name(encoding: object, *, what: str) -> str:
+    """``encoding``, having proved it names a codec this interpreter actually has.
+
+    One table for "that is not a codec", read by :func:`encoded` on the way out, by
+    :func:`decoded` on the way in, and by
+    :meth:`~aslmp.client.Plc.read_str` *before* it sends anything -- because a read whose
+    codec name is a typo should not cost a round trip and then raise, and the write half
+    has never charged for one.
+
+    :class:`~aslmp.errors.SlmpConfigurationError` rather than
+    :class:`~aslmp.errors.SlmpValueRangeError`: an unknown codec is an incoherent
+    argument, not a value outside a domain. Nothing here falls back to ASCII -- the
+    registers would hold a different string than the one asked for, and the PLC would
+    answer ``0x0000`` either way.
+    """
+    if not isinstance(encoding, str):
+        raise SlmpConfigurationError(
+            f"{what}: an encoding is the name of a Python codec, not "
+            f"{type(encoding).__name__} ({encoding!r})."
+        )
+    try:
+        "".encode(encoding)
+    except LookupError as exc:
+        raise SlmpConfigurationError(
+            f"{what}: {encoding!r} is not a codec Python knows. Nothing here falls back "
+            f"to ASCII: the registers would hold a different string than the one asked "
+            f"for, and the PLC would answer 0x0000."
+        ) from exc
+    return encoding
+
+
+def decoded(raw: bytes, *, encoding: str, what: str) -> str:
+    """``raw`` as text, with every failure inside the DESIGN 3.1 tree. The read half.
+
+    The sibling :func:`encoded` was written without, and the omission is the shape this
+    package keeps finding: the mutating half of a pair was brought inside the error tree
+    and the observing half was left raising whatever Python raised.
+    ``read_str('D110', length=4, encoding='utf-9')`` raised a bare ``LookupError`` and a
+    ``shift_jis`` register pair cut at an odd byte raised a bare ``UnicodeDecodeError``
+    -- measured on FX5U-32MT/DS fw 1.065 from this host over TCP 5002, 2026-09-07, with
+    ``D110``/``D111`` holding ``0xA082 0xA282`` -- so ``except SlmpError`` around a read
+    caught neither.
+
+    An unknown codec is :class:`~aslmp.errors.SlmpConfigurationError` (see
+    :func:`codec_name`). Bytes that are not text in that codec are
+    :class:`~aslmp.errors.SlmpPayloadShapeError`, because the CPU answered ``0x0000``
+    and the frame parsed: what arrived is registers that do not hold what the caller
+    said they hold. That is the same class
+    :func:`aslmp.blocks.plan._text` raises for the same failure on a block field, and it
+    is now the same function raising it.
+
+    Never ``errors='replace'``: a part number read back with ``?`` where its accent was
+    is a different part number, reported as success.
+    """
+    codec_name(encoding, what=what)
+    try:
+        return raw.decode(encoding)
+    except UnicodeDecodeError as exc:
+        raise SlmpPayloadShapeError(
+            f"{what}: {raw.hex(' ')} is not {encoding} text ({exc.reason} at byte "
+            f"{exc.start}). The end code was 0x0000 and nothing was retried, so this is "
+            f"registers that do not hold what was declared -- or a byte window that cut "
+            f"a multi-byte character in half, since the window that produced these "
+            f"bytes is measured in BYTES, two per register, and not in characters. "
+            f"Nothing here substitutes replacement characters."
+        ) from exc
+
+
 def encoded(value: object, *, encoding: str, what: str) -> bytes:
     """``value`` as ``encoding`` bytes, with every failure inside the DESIGN 3.1 tree.
 
@@ -601,11 +671,14 @@ def encoded(value: object, *, encoding: str, what: str) -> bytes:
 
     The first two are value-domain failures and raise
     :class:`~aslmp.errors.SlmpValueRangeError`; the third is an incoherent argument and
-    raises :class:`~aslmp.errors.SlmpConfigurationError`, the same split the rest of this
-    module makes. All three are ``SlmpUsageError``, all three mean nothing was sent, and
-    none of them substitutes a replacement character: a part number written with ``?``
-    where its accent was is a different part number.
+    raises :class:`~aslmp.errors.SlmpConfigurationError` from :func:`codec_name`, the
+    same split the rest of this module makes -- and the same function the read half now
+    calls, so the two doors cannot disagree about which codec names exist. All three are
+    ``SlmpUsageError``, all three mean nothing was sent, and none of them substitutes a
+    replacement character: a part number written with ``?`` where its accent was is a
+    different part number.
     """
+    codec_name(encoding, what=what)
     if not isinstance(value, str):
         raise SlmpValueRangeError(
             f"{what}: a string field takes a str, not {type(value).__name__} "
@@ -614,12 +687,6 @@ def encoded(value: object, *, encoding: str, what: str) -> bytes:
         )
     try:
         return value.encode(encoding)
-    except LookupError as exc:
-        raise SlmpConfigurationError(
-            f"{what}: {encoding!r} is not a codec Python knows. Nothing here falls back "
-            f"to ASCII: the registers would hold a different string than the one asked "
-            f"for, and the PLC would answer 0x0000."
-        ) from exc
     except UnicodeEncodeError as exc:
         raise SlmpValueRangeError(
             f"{what}: {value!r} cannot be encoded as {encoding} ({exc.reason} at "

@@ -153,6 +153,12 @@ class EndCodePolicy:
     against ``0xC052``) and ``request_length_mismatch`` (``0xC057`` against ``0xC061``),
     and those three are the whole reason this is a policy object rather than a module of
     constants.
+
+    ``password_locked`` is what every command but ``1630`` answers while ``1631`` holds
+    the port locked -- "nothing else can be done until the port is unlocked"
+    (SH(NA)-081257ENG rev AD, 3.5 List of Error Codes). No CPU here has ever been asked
+    for it on a wire: every target ships an empty password, so it is a manual figure and
+    is marked as one wherever a report prints provenance.
     """
 
     unsupported_command: int = 0xC059
@@ -173,6 +179,7 @@ class EndCodePolicy:
     ascii_into_binary_entry: int = 0xC06F
     remote_control_disabled: int = 0x408B
     password_incorrect: int = 0xC200
+    password_locked: int = 0xC201
 
     def __post_init__(self) -> None:
         for name, value in self.as_mapping().items():
@@ -203,6 +210,7 @@ class EndCodePolicy:
             "ascii_into_binary_entry": self.ascii_into_binary_entry,
             "remote_control_disabled": self.remote_control_disabled,
             "password_incorrect": self.password_incorrect,
+            "password_locked": self.password_locked,
         }
 
 

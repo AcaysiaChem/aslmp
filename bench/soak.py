@@ -33,8 +33,9 @@ plan's field offsets, the low-word-first f32 decode, the write encode, and the C
 agreeing that the value it got is the value we sent. A plausible-looking latency curve
 can be produced by a client that decodes garbage; this cannot.
 
-Measured on **FX5U-32MT/DS fw 1.065, 2026-09-07, from the bench laptop over Wi-Fi** at
-six process values spanning both clamps (PV 59.56 / 56.523 / 55.0 / 60.0 / 61.0 / 0.0):
+Measured on **FX5U-32MT/DS fw 1.065, 2026-09-07, from the laptop at 192.168.10.41 over
+Wi-Fi at ~7 ms median RTT** at six process values spanning both clamps
+(PV 59.56 / 56.523 / 55.0 / 60.0 / 61.0 / 0.0):
 the deviation was **exactly 0.0 in every one**, including ``Err`` 60.0 -> ``MV`` 100.0 at
 the ceiling and ``Err`` -1.0 -> ``MV`` 0.0 at the floor, and again in all 1,125 snapshots
 of a 45 s run at 25 Hz over the same link.
@@ -53,13 +54,25 @@ and the last.
 .. rubric:: The run this file was promoted from
 
 **FX5U-32MT/DS fw 1.065, 2026-09-07, from argus-bench (192.168.10.36) over the WIRED
-link**, TCP entry 5002: 15,000 cycles / 30,005 transactions / 300.0 s at exactly 50.0 Hz;
+link at 3.64 ms median RTT**, TCP entry 5002: 15,000 cycles / 30,005 transactions /
+300.0 s at exactly 50.0 Hz;
 0 errors, 0 reconnects, 0 entry-busy, 0 concurrent rejections, 0 cadence overruns; block
 read ``0403`` p50 3.67 / p90 4.23 / p99 4.69 / p99.9 5.52 / max 6.72 / sd 0.48 ms; whole
 cycle p50 7.23 / p90 8.26 / p99 8.94 / p99.9 10.10 / max 11.20 / sd 0.65 ms; p50 3.72 ->
-3.67 ms across the five minutes, i.e. not at all; PLC 969 scans/s under load against 1029
-idle. **Those numbers are that host on that link.** From the Wi-Fi laptop the same script
-runs and the same arithmetic holds, and the latencies are somebody else's.
+3.67 ms across the five minutes, i.e. not at all; PLC 969 scans/s under load against that
+run's OWN idle reference of 1029 scans/s. **Those numbers are that host on that link.**
+From the Wi-Fi laptop the same script runs and the same arithmetic holds, and the
+latencies are somebody else's.
+
+969 against 1029 is a cost of about 5.8 % of scan rate; against the figure this
+repository publishes for an idle FX5U -- **1018 scans/s, 982 us per scan**,
+``docs/hardware.md`` section 17 -- the same loaded number is 4.8 %, so the honest claim is
+"about 5-6 %". The pair belongs to its run and must not be split: 1029 is not a second
+published idle rate, it is the reference this run took for itself, and quoting either half
+alone is how a within-session ratio turns into a repository-wide fact. ``docs/hardware.md``
+section 17 is the one place the idle rate lives, and
+``tests/unit/test_citations.py::test_no_scan_rate_literal_drifts_from_the_published_one``
+fails if this docstring drifts from it.
 
 Run it against a PLC you are allowed to *write*::
 

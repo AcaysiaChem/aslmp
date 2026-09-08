@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 from aslmp.profile import Encoding
-from aslmp.testing.dispatch import Dispatcher, Reply, Silence
+from aslmp.testing.dispatch import Dispatcher, Reply, SessionState, Silence
 from aslmp.testing.pathology import Pathology
 from aslmp.testing.targets import FX5U_32MT_DS, SimulatorTarget
 from aslmp.wire.codec import ASCII, BINARY, Codec, SlmpCodecError
@@ -212,6 +212,11 @@ class PlcSimulator:
     every entry, because they are on the same silicon. The pathology board defaults to
     the target's own (:attr:`~aslmp.testing.targets.SimulatorTarget.pathology`), so
     ``FX5U_32MT_DS`` misbehaves out of the box and ``PEDANTIC`` does not.
+
+    ``scan_per_request=True`` runs the bench's own program while the CPU serves: ``D8``
+    advances once per request, so registers move underneath a client and a stale-value
+    bug has something to fail against
+    (:attr:`~aslmp.testing.dispatch.Dispatcher.scan_per_request`).
     """
 
     __slots__ = (
@@ -236,6 +241,7 @@ class PlcSimulator:
         pathology: Pathology | None = None,
         memory: DeviceMemory | None = None,
         scenario: Scenario | None = None,
+        scan_per_request: bool = False,
         host: str = "127.0.0.1",
     ) -> None:
         self._entries = tuple(entries)
@@ -250,6 +256,7 @@ class PlcSimulator:
             memory=target.memory() if memory is None else memory,
             scenario=scenario,
             pathology=self._pathology,
+            scan_per_request=scan_per_request,
         )
         self._host = host
         self._bound: dict[str, _Bound] = {}
@@ -334,6 +341,24 @@ class PlcSimulator:
     def dispatcher(self) -> Dispatcher:
         """The command dispatcher, for the session state and the scan counter."""
         return self._dispatcher
+
+    @property
+    def state(self) -> SessionState:
+        """The CPU's session state: the key switch, the last remote request, the lock.
+
+        The inputs only. What the CPU *reports* is ``SD203`` in :attr:`memory`, and
+        :meth:`cpu_state` reads it the way a client does.
+        """
+        return self._dispatcher.state
+
+    def cpu_state(self) -> int:
+        """What ``SD203`` holds: one of the :class:`~aslmp.testing.dispatch.CpuRunState`
+        values, read out of device memory rather than out of the state object.
+
+        Re-derived at the top of every served request, so a key switch turned since the
+        last one reaches the register on the next scan.
+        """
+        return self._dispatcher.cpu_state()
 
     @property
     def entries(self) -> tuple[Entry, ...]:

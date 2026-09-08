@@ -8,10 +8,11 @@ Gated on ``ASLMP_TEST_HOST``; marked ``hardware``; never run in CI::
     ASLMP_TEST_HOST=192.168.10.250 .venv/Scripts/python.exe -m pytest tests/hardware
 
 **The bench.** FX5U-32MT/DS firmware 1.065 at 192.168.10.250, in RUN with no physical I/O
-wired, idling at **1018 scans/s** -- D8 read as ``f32`` over 1 s, 5 s and 10 s windows,
-2026-09-07, from the laptop at 192.168.10.41 over Wi-Fi, all three agreeing to 0.4 %.
-Earlier notes say ~1024 and ~1029; the 1 % spread is **measurement conditions** -- the
-CPU's own scan-time jitter, the length of the window and the Wi-Fi round trips inside it.
+wired, idling at :data:`IDLE_SCAN_RATE_HZ` -- **1018 scans/s, 982 us per scan**, the one
+idle scan rate this repository publishes, recorded with its conditions in
+``docs/hardware.md`` section 17 and not restated anywhere else as an independent fact.
+Earlier notes said ~1024 and ~1029; the 1 % spread is **measurement conditions** -- the
+CPU's own scan-time jitter, the length of the window and the round trips inside it.
 It is *not* the register's resolution, and an earlier draft of this docstring said it was,
 on the arithmetic that "an ``f32``'s ulp reaches 128 at large counter values". That is
 wrong here twice over: ``IO_Scan`` wraps above 1.0e7 (``IF IO_Scan > 1.0E7`` in the CPU's
@@ -99,6 +100,28 @@ pytestmark = [
 SP, PV, MV, ERR, SCAN = "D0", "D2", "D4", "D6", "D8"
 SCRATCH_WORD = "D100"
 SCRATCH_BIT = "M100"
+
+IDLE_SCAN_RATE_HZ = 1018.0
+"""The CPU's idle scan rate, in scans per second. **Quoted from one place.**
+
+``docs/hardware.md`` section 17 is that place: 20,374 counts in 20.014 s = 1018.0 scans/s
+from ``argus-bench`` (192.168.10.36) over the wired link, 1018.4 from the laptop
+(192.168.10.41) over Wi-Fi, FX5U-32MT/DS fw 1.065 at 192.168.10.250 in RUN with no
+physical I/O wired, 2026-09-07. 982 us per scan is ``1e6 / 1018.0``, not a second
+measurement.
+
+This constant exists because the literal it replaced was ``1024``, written inline as
+``expected = 1024 * 2.0``, and ~1024 was never measured -- it was a number the repository
+carried in prose and then depended on in an assertion. Every scan figure in the tree is
+now either this value, arithmetic on it, or a loaded/idle pair belonging to one run, and
+``tests/unit/test_citations.py`` fails if any of them drifts apart.
+"""
+
+SCAN_SAMPLE_WINDOW_S = 2.0
+"""How long :func:`test_declaring_scan_as_u32_reads_a_bit_pattern_and_nothing_says_so`
+watches the counter. Long enough that ``IDLE_SCAN_RATE_HZ * SCAN_SAMPLE_WINDOW_S`` is
+~2,000 counts, so neither a round trip at either end nor a scan-time wobble can move the
+f32 reading out of the factor-of-two band the test asserts."""
 
 # Remote RUN / STOP / PAUSE / LATCH CLEAR / RESET. Forbidden on this CPU: a memory-card
 # error once made it refuse a remote RUN and need a physical power cycle.
@@ -338,24 +361,30 @@ async def test_declaring_scan_as_u32_reads_a_bit_pattern_and_nothing_says_so() -
     What makes it genuinely dangerous, and what this test exists to pin: IEEE-754 bit
     patterns rise monotonically for positive floats, so the wrong reading still *increases*
     every cycle. A naive "is the counter advancing?" assertion passes. Ours did, until the
-    rate was checked against the documented ~1024 scans/s.
+    rate was checked against the CPU's published idle scan rate -- :data:`IDLE_SCAN_RATE_HZ`,
+    ``docs/hardware.md`` section 17. (The figure that check was made against at the time was
+    "the documented ~1024 scans/s", which was never a measurement; it has since been
+    reconciled to 1018 and the assertion below now derives its expectation from the constant
+    rather than from a literal, so this test cannot go stale against a number nobody owns.)
     """
     async with bench() as plc:
         first_f32 = await plc.read_f32(SCAN)
         first_u32 = await plc.read_u32(SCAN)
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(SCAN_SAMPLE_WINDOW_S)
         second_f32 = await plc.read_f32(SCAN)
         second_u32 = await plc.read_u32(SCAN)
 
         as_real = second_f32 - first_f32
         as_uint = second_u32 - first_u32
-        expected = 1024 * 2.0  # the CPU's measured scan rate over the sleep
+        # Derived, never typed: the published idle rate times the window this test slept.
+        expected = IDLE_SCAN_RATE_HZ * SCAN_SAMPLE_WINDOW_S
 
         # Both readings rise. Only one of them is the scan count.
         assert as_real > 0 and as_uint > 0, "both readings advance -- that is the trap"
         assert 0.5 < as_real / expected < 2.0, "the f32 reading tracks the real scan rate"
         assert not 0.5 < as_uint / expected < 2.0, (
-            f"the u32 reading advanced by {as_uint:,} over 2 s against an expected "
+            f"the u32 reading advanced by {as_uint:,} over {SCAN_SAMPLE_WINDOW_S:g} s "
+            f"against an expected "
             f"~{expected:,.0f}. If this ever falls in range, IO_Scan's type in the PLC "
             f"program has changed and this test's premise is stale -- check the global "
             f"label in GX Works3 before editing anything here."
@@ -793,8 +822,11 @@ def raw_socket_control(host: str, port: int, samples: int) -> list[float]:
     """A blocking socket, a hand-built ``0401`` for D4, and ``time.perf_counter_ns``.
 
     Shares no code with the library on purpose. A published latency without a
-    same-session control is not a measurement: this bench gave p50 7.1 / p99 18.8 ms on
-    one day and p50 10.3 / p99 95.2 ms on another.
+    same-session control is not a measurement: from the laptop at 192.168.10.41 over
+    Wi-Fi (~7 ms median RTT), against this same FX5U, the bench gave p50 7.1 / p99
+    18.8 ms on one afternoon and p50 10.3 / p99 95.2 ms on another, with nothing changed
+    but the day. The two dates were not written down; see ``docs/benchmarking.md``, which
+    prints that gap as a defect in the record rather than filling it in.
     """
     frame = RAW_HEAD + d_spec(4) + struct.pack("<H", 2)
     out: list[float] = []

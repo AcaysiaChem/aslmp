@@ -7,7 +7,9 @@ you name selects one method on the client and its concrete return type, and the 
 value is that type's ``repr``.
 
 ``--as`` is **required**, for the same reason ``--profile`` is: there is no default that
-could be right. It defaulted to ``u16`` for one revision, and on the bench this library
+could be right -- required in the parser, so the usage line prints ``--as {...}`` without
+the brackets that mean optional, and not merely refused in the body afterwards. It
+defaulted to ``u16`` for one revision, and on the bench this library
 was built against that made ``aslmp read 192.168.10.250 D8`` print ``54720`` -- ``D8``
 holds a ``REAL`` there (``IO_Scan := IO_Scan + 1.0`` in the CPU's own ST), so 54720 is
 the low half of a float's bit pattern rendered as a plausible integer, and the CPU
@@ -30,7 +32,11 @@ from typing import TYPE_CHECKING, Any
 
 from aslmp.tools import EXIT_OK
 from aslmp.tools._common import (
+    VALUE_KINDS,
+    KindNotGivenError,
+    KindRequiredParser,
     add_connection_arguments,
+    add_kind_argument,
     build_client,
     guarded,
     parse_or_exit,
@@ -42,28 +48,76 @@ if TYPE_CHECKING:
 
 __all__ = ["KINDS", "build_parser", "run"]
 
-KINDS: tuple[str, ...] = (
-    "bit",
-    "i16",
-    "u16",
-    "i32",
-    "u32",
-    "f32",
-    "f64",
-    "str",
-    "words",
-    "bits",
-)
+KINDS: tuple[str, ...] = VALUE_KINDS
 """What ``--as`` accepts. ``words`` and ``bits`` are the raw batch arrays; everything
-else is a decoded value."""
+else is a decoded value.
+
+The **same** tuple ``aslmp write`` offers, and one object rather than two lists that
+happen to agree today: they did not agree, and ``bits`` was the one that was readable
+and not writable (:data:`~aslmp.tools._common.VALUE_KINDS`).
+"""
 
 _ARRAY_KINDS = frozenset({"words", "bits", "f32"})
 """The kinds ``--count`` is meaningful for. ``--count`` with any other kind is a usage
 error rather than a silently ignored flag."""
 
+WHY_AS_IS_REQUIRED = (
+    "--as is required: a register carries no type on the wire, so there is no "
+    "default that could be right. On the bench this library was built against, "
+    "D8 is a REAL -- the CPU's own ST does IO_Scan := IO_Scan + 1.0 -- and this "
+    "command's old default of u16 answered `aslmp read ... D8` with 54720 "
+    "(measured on FX5U-32MT/DS fw 1.065, 2026-09-07): the low half of that "
+    "float's bit pattern, a perfectly plausible integer, end code 0x0000. "
+    f"Choose one of: {', '.join(KINDS)}. Check the type in GX Works3 under "
+    "Label -> Global Label; `--as words` prints the raw registers if you want "
+    "to look at the bytes first."
+)
+"""Why the caller is being asked. Printed *instead of* argparse's own one-liner.
+
+Said once, and used twice: this is both the reason in the failure message and the
+substance of ``--as``'s ``help``. The two used to be separate strings.
+"""
+
+
+_MissingKind = KindNotGivenError
+"""``--as`` was not given. Carried out of argparse rather than exiting.
+
+See :class:`_ReadParser` for why this exists rather than an ``exit(2)``. It lives in
+``_common`` now rather than here, because ``aslmp write`` needs exactly the same thing
+for exactly the same reason and had not been given it
+(:class:`~aslmp.tools._common.KindNotGivenError`).
+"""
+
+
+class _ReadParser(KindRequiredParser):
+    """An ``ArgumentParser`` whose usage line tells the truth about ``--as``.
+
+    ``--as`` is declared ``required=True``, because it is: without it this command
+    exits 2 and reads nothing. Until 2026-09-07 it was declared optional with
+    ``default=None`` and refused in the body, so ``aslmp read --help`` printed
+    ``[--as {bit,i16,...}]`` -- brackets, meaning optional -- directly above a help
+    string beginning "REQUIRED". A usage line that contradicts its own help is the same
+    defect as a docstring that contradicts its code, in the command this project had
+    just finished fixing for telling users things that were not so.
+
+    Declaring it required moves the refusal into argparse, which would print
+    ``the following arguments are required: --as`` and throw away the reason. The reason
+    is the whole value of the message -- it is the one place a newcomer is told that a D
+    register carries no type -- so that one error is converted back into
+    :func:`~aslmp.tools._common.usage`'s return-a-status form and rendered with
+    :data:`WHY_AS_IS_REQUIRED`. Every other parse error is argparse's own, unchanged.
+
+    The mechanism is :class:`~aslmp.tools._common.KindRequiredParser` and this class is
+    the two lines that say which paragraph to print: ``aslmp write`` needed the identical
+    behaviour and was the half still carrying a default, so the machinery is shared and
+    only the reason differs.
+    """
+
+    WHY = WHY_AS_IS_REQUIRED
+
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _ReadParser(
         prog="aslmp read",
         description="Read one device address and print the value. Changes nothing.",
         epilog=(
@@ -75,14 +129,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_connection_arguments(parser)
     parser.add_argument("address", help="a device address, e.g. D0, M100, Y20, SD203")
-    parser.add_argument(
-        "--as",
-        dest="kind",
-        choices=KINDS,
-        default=None,
+    add_kind_argument(
+        parser,
         help=(
-            "REQUIRED: how to decode what is read. A register carries no type on the "
-            "wire, so there is no default that could be right"
+            "how to decode what is read. A register carries no type on the wire, so "
+            "there is no default that could be right"
         ),
     )
     parser.add_argument(
@@ -97,7 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
-        help="character length; required for --as str",
+        help="byte length, two per register; required for --as str",
     )
     parser.add_argument(
         "--word-order",
@@ -127,19 +178,10 @@ def _order(name: str | None) -> Any:
 
 
 def run(argv: Sequence[str]) -> int:
-    args = parse_or_exit(build_parser(), argv)
-    if args.kind is None:
-        return usage(
-            "--as is required: a register carries no type on the wire, so there is no "
-            "default that could be right. On the bench this library was built against, "
-            "D8 is a REAL -- the CPU's own ST does IO_Scan := IO_Scan + 1.0 -- and this "
-            "command's old default of u16 answered `aslmp read ... D8` with 54720 "
-            "(measured on FX5U-32MT/DS fw 1.065, 2026-09-07): the low half of that "
-            "float's bit pattern, a perfectly plausible integer, end code 0x0000. "
-            f"Choose one of: {', '.join(KINDS)}. Check the type in GX Works3 under "
-            "Label -> Global Label; `--as words` prints the raw registers if you want "
-            "to look at the bytes first."
-        )
+    try:
+        args = parse_or_exit(build_parser(), argv)
+    except _MissingKind:
+        return usage(WHY_AS_IS_REQUIRED)
     if args.count < 1:
         return usage(f"--count must be at least 1; got {args.count}")
     if args.count > 1 and args.kind not in _ARRAY_KINDS:

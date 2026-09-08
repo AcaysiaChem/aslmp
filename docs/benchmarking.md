@@ -16,7 +16,8 @@ broken in public, and the third it broke quietly.
 A speed-up is a ratio, and a ratio is only meaningful if its two halves were measured the same
 way. Ours were not. The published "**4.9x for block reads**" divided the block's **wire time**
 (7.75 ms, the library's own `wire_ms` stamp) by five separate reads' **wall time** (38.24 ms,
-`perf_counter` around the loop), so the numerator excluded the client's scheduling and the
+`perf_counter` around the loop) — n=9 of each, 2026-09-07, from the laptop at 192.168.10.41
+over **Wi-Fi** at ~7 ms median RTT — so the numerator excluded the client's scheduling and the
 denominator included four helpings of it. The same hardware test records the like-for-like
 figure — `five_reads_wire_sum_p50_ms`, the sum of the five reads' own wire stamps — and prints
 it under `-s`; it is simply not the one that got published.
@@ -28,9 +29,9 @@ anyway: five reads are five moments and one `0x0403` is one moment, and no laten
 that.
 
 **And quote the `n`.** A percentile without its sample count cannot be given an error bar by
-the reader, which is how "+0.07 ms at p50" came to be published from n=120 with sd ~1.03 ms —
-where the standard error on a difference of medians is around 0.17 ms, more than twice the
-quantity claimed. `Measurement` and the shipped tables now have `host`, `medium` and `samples`
+the reader, which is how "+0.07 ms at p50" came to be published from n=120 — laptop at
+192.168.10.41 over **Wi-Fi**, ~7 ms median RTT — with sd ~1.03 ms, where the standard error on
+a difference of medians is around 0.17 ms, more than twice the quantity claimed. `Measurement` and the shipped tables now have `host`, `medium` and `samples`
 columns so that a fact carries all three conditions with it.
 
 ## Why the second rule exists
@@ -51,14 +52,18 @@ matter how good its control is.** Name the host, the medium and the median RTT.
 
 ## The first rule is not ceremony either
 
-The same machine, the same PLC and the same Wi-Fi link produced:
+The laptop at 192.168.10.41 over **Wi-Fi** (~7 ms median RTT), against this same FX5U-32MT/DS
+on firmware 1.065, produced:
 
-| afternoon | p50 | p99 |
-| --- | --- | --- |
-| one | 7.1 ms | 18.8 ms |
-| the other | 10.3 ms | 95.2 ms |
+| afternoon | host | link | p50 | p99 |
+| --- | --- | --- | --- | --- |
+| one | 192.168.10.41 | Wi-Fi, ~7 ms median RTT | 7.1 ms | 18.8 ms |
+| the other | 192.168.10.41 | Wi-Fi, ~7 ms median RTT | 10.3 ms | 95.2 ms |
 
-Nothing changed between them but the day. A latency number with no control beside it does not
+The two dates were not written down at the time. That is a defect in the record and it is
+printed as one rather than guessed at: this file's own rule is that a table names its host, its
+medium and its median RTT, and the date is the fourth condition every measured row in
+`ambiguities.tsv` carries. Nothing changed between the two runs but the day. A latency number with no control beside it does not
 tell you what a library costs; it tells you what the link was doing while the library ran. **A
 5x movement in the tail is larger than any overhead this library could possibly have**, so a
 number without a control cannot be interpreted at all.
@@ -90,8 +95,9 @@ than the thing being measured. Read that line before any other row.
 
 **One control is not a bracket, and a run with one is not publishable.**
 `tests/hardware/test_fx5u.py`'s latency test takes its raw-socket control once, before the
-library's samples, and the overhead figure that came out of it — "+0.07 ms at p50" — was
-published as though it had been bracketed. It had not, and at n=120 with sd ~1.03 ms the
+library's samples, and the overhead figure that came out of it — "+0.07 ms at p50", from the
+laptop at 192.168.10.41 over **Wi-Fi** at ~7 ms median RTT — was published as though it had
+been bracketed. It had not, and at n=120 with sd ~1.03 ms the
 difference of medians has a standard error around 0.17 ms in any case, so the run could not
 have resolved 0.07 ms even bracketed. The restated claim is in `CHANGELOG.md`: the library's
 p50 was **indistinguishable from a raw socket's at this n**, which is the finding, and it is a
@@ -106,11 +112,12 @@ Nearest rank, no interpolation: an interpolated p99 of 300 samples reports a lat
 never observed, which is the wrong kind of number to publish about a machine.
 
 A mean would hide the only thing worth knowing, and the transport comparison is the case in
-point. On Wi-Fi the two transports split the columns — UDP took the median (6.20 against
-7.41 ms) and TCP took the tail (p99 10.49 against 13.80, sd 1.03 against 1.79) — and a mean
-would have reported one winner and lost the fact that a control loop cares about the second
-column. On wire there is no split at all: UDP takes p50, p90 and p99 (2.42/3.40/3.57 against
-3.63/4.05/4.69) at equal sd. Same client, same CPU, same command; two different shapes, and only
+point. On **Wi-Fi** (laptop, 192.168.10.41, ~7 ms median RTT, 2026-09-06) the two transports
+split the columns — UDP took the median (6.20 against 7.41 ms) and TCP took the tail (p99 10.49
+against 13.80, sd 1.03 against 1.79) — and a mean would have reported one winner and lost the
+fact that a control loop cares about the second column. On **wire** (`argus-bench`,
+192.168.10.36, 3.64 ms median RTT, 2026-09-07) there is no split at all: UDP takes p50, p90 and
+p99 (2.42/3.40/3.57 against 3.63/4.05/4.69) at equal sd. Same client, same CPU, same command; two different shapes, and only
 percentiles show that they *are* different shapes.
 
 The default is still `TransportKind.TCP`, now for configurability rather than jitter — a UDP
@@ -164,7 +171,9 @@ CPU's service processing dominates the wire time — a `0x0619` that touches no 
 the same as a 2-word read.
 
 **It is still the wrong shape for a loop, and no latency column shows why.** Those four values
-were sampled at four different moments; on our plant a split like that sampled up to 27 ms apart.
+were sampled at four different moments; on our bench a split like that sampled up to 27 ms apart
+(2026-09-06, laptop at 192.168.10.41 over **Wi-Fi**, ~7 ms median RTT — four round trips of a
+7 ms link is where most of that 27 ms comes from, which is the point).
 That is the entire reason `0x0403` exists, and it is why splitting a random read in this library
 returns a `SplitReading` and not a `RandomReading`: the loss of atomicity is in the type, where a
 benchmark cannot talk you out of it.

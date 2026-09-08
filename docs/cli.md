@@ -77,11 +77,18 @@ $ aslmp read 192.168.10.250 D0 --as f32 --timing --profile melsec:iq-f/fx5u
   6.92 ms wire, 1 chunk(s), command 0x0401 sub 0x0000, 15 bytes back
 ```
 
+That transcript is real, and its 6.92 ms belongs to the laptop at 192.168.10.41 over **Wi-Fi**
+(~7 ms median RTT) against FX5U-32MT/DS fw 1.065, 2026-09-06 — not to your link. `--timing`
+prints what *your* round trip cost; the point of the flag is that you never have to take ours.
+
 `--as` takes `bit i16 u16 i32 u32 f32 f64 str words bits` and is **required**, for the same
 reason `--profile` is: a register carries no type on the wire, so there is no default that could
 be right. It defaulted to `u16` for one revision, which made `aslmp read 192.168.10.250 D8`
 print `54720` on the bench this library was built against — `D8` holds a `REAL` there, so that
 number is the low half of a float's bit pattern and the CPU answers `0x0000` either way.
+Required **in the parser**, so `aslmp read --help` prints `--as {bit,i16,...}` with no brackets;
+until 2026-09-07 it was declared optional and refused afterwards, and the usage line said
+`[--as {...}]` directly above a help string beginning "REQUIRED".
 `--count` applies only to `words`, `bits` and `f32`; naming it with any other kind is a usage
 error rather than a silently ignored flag. `--as str` requires `--length`, because a string's
 word count is part of the request and cannot be inferred from the response.

@@ -331,15 +331,25 @@ def test_wire_value_holds_a_write_to_the_type_the_point_itself_declares() -> Non
     assert RandomWrite(dword("D100", kind="i32"), -1).wire_value() == 0xFFFFFFFF
 
 
-def test_a_u16_point_stays_the_raw_register_it_prints_as() -> None:
-    """``u16`` is what a register is when nobody has said otherwise, and ``__str__``
-    prints it with no suffix at all for that reason. Both renderings of the same sixteen
-    bits stay legal there, exactly as they do for ``write_words``; 70000 does not."""
+def test_a_u16_point_is_unsigned_the_way_every_other_u16_door_is() -> None:
+    """``u16`` prints with no suffix because it is the default kind for its width, not
+    because it is untyped -- and it was being enforced as untyped.
+
+    ``RandomWrite(word('D101', kind='u16'), -1)`` masked to ``0xFFFF`` and
+    ``write_random`` sent it while ``Plc.write_u16(-1)`` refused, so ``D101`` read back
+    65535 through one door and nothing at all through the other (FX5U-32MT/DS fw 1.065
+    over TCP 5002 from this host, 2026-09-07). The raw-register door, where -1 and 65535
+    are the same sixteen bits, is ``write_words`` and ``BlockWrite``; a named type is a
+    named type wherever it is named.
+    """
     assert str(word("D100")) == "D100"
-    assert RandomWrite(word("D100"), -1).wire_value() == 0xFFFF
     assert RandomWrite(word("D100"), 65_535).wire_value() == 0xFFFF
+    assert RandomWrite(dword("D100"), 0xFFFF_FFFF).wire_value() == 0xFFFFFFFF
+    for outside in (-1, 70_000):
+        with pytest.raises(SlmpValueRangeError, match="does not fit"):
+            RandomWrite(word("D100"), outside).wire_value()
     with pytest.raises(SlmpValueRangeError, match="does not fit"):
-        RandomWrite(word("D100"), 70_000).wire_value()
+        RandomWrite(dword("D100"), -1).wire_value()
 
 
 def test_every_point_kind_maps_to_exactly_one_declared_domain() -> None:
@@ -350,5 +360,9 @@ def test_every_point_kind_maps_to_exactly_one_declared_domain() -> None:
     assert set(_POINT_DOMAINS) == kinds
     assert word("D0", kind="i16").signed_field is True
     assert dword("D0", kind="i32").signed_field is True
-    assert word("D0").signed_field is None
-    assert dword("D0").signed_field is None
+    # False, not None: u16/u32 name an unsigned type and are held to it. None is
+    # reserved for the kinds that never reach unsigned() at all.
+    assert word("D0").signed_field is False
+    assert dword("D0").signed_field is False
+    assert dword("D0", kind="f32").signed_field is None
+    assert bit_point("D0").signed_field is None

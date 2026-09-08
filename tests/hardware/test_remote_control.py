@@ -38,8 +38,13 @@ RUN**, and every comparison here is a delta taken inside a single window for exa
 reason. Never hold a ``D8`` value across a transition and expect it to still mean
 something. See ``docs/hardware.md`` section 15.
 
-**The bench.** FX5U-32MT/DS firmware 1.065 at 192.168.10.250, in RUN at ~1029 scans/s
-idle, no physical I/O wired. This module uses **TCP entry 5004** so it cannot contend
+**The bench.** FX5U-32MT/DS firmware 1.065 at 192.168.10.250, in RUN at
+:data:`IDLE_SCAN_RATE_HZ` -- **1018 scans/s, 982 us per scan**, the one idle scan rate this
+repository publishes, recorded with its conditions in ``docs/hardware.md`` section 17 --
+with no physical I/O wired. (This docstring said ~1029 until 2026-09-07. That figure was
+one session's own reference, quoted here with nothing to pair it against, which is how a
+within-run number becomes a standing claim.) This module uses **TCP entry 5004** so it
+cannot contend
 with the main hardware suite for an entry; the CPU serves one TCP connection per
 configured entry.
 
@@ -81,12 +86,23 @@ pytestmark = [
 SCAN = "D8"
 """IO_Scan, a REAL the PLC's own program increments once per scan. The oracle."""
 
+IDLE_SCAN_RATE_HZ = 1018.0
+"""The CPU's idle scan rate, in scans per second. **Quoted from one place.**
+
+``docs/hardware.md`` section 17: 20,374 counts in 20.014 s = 1018.0 scans/s from
+``argus-bench`` (192.168.10.36) over the wired link, 1018.4 from the laptop
+(192.168.10.41) over Wi-Fi, FX5U-32MT/DS fw 1.065 at 192.168.10.250 in RUN with no
+physical I/O wired, 2026-09-07. 982 us per scan is ``1e6 / 1018.0``, not a second
+measurement. ``tests/unit/test_citations.py`` fails if any copy of this number in the
+tree drifts from that section.
+"""
+
 SETTLE_WINDOW_S = 0.3
 """How long the scan counter is watched to decide whether the program is executing.
 
-At ~1029 scans/s this is ~300 counts when running and exactly 0 when not, so the two
-cases are three orders of magnitude apart and no threshold has to be invented. It is also
-comfortably longer than the 25-33 ms the CPU takes to enter RUN.
+At :data:`IDLE_SCAN_RATE_HZ` this is ~305 counts when running and exactly 0 when not, so
+the two cases are three orders of magnitude apart and no threshold has to be invented. It
+is also comfortably longer than the 25-33 ms the CPU takes to enter RUN.
 """
 
 CYCLES = 3
@@ -271,9 +287,15 @@ async def test_remote_stop_freezes_the_scan_counter_and_run_starts_it_again() ->
 
     ``read_cpu_status`` reads SD203, and SD203 is what ``verify=True`` already consulted,
     so a client that misdecoded that register would agree with itself perfectly. IO_Scan
-    is incremented by the PLC program: it advances at ~1029/s in RUN and by **exactly
-    zero** in STOP. Measured 2026-09-07 from the bench laptop: 324 counts in 300 ms
-    running, 0.0 stopped, 326 running again.
+    is incremented by the PLC program: it advances at :data:`IDLE_SCAN_RATE_HZ` in RUN and
+    by **exactly zero** in STOP. Measured 2026-09-07 from the laptop at 192.168.10.41 over
+    Wi-Fi: 324 counts in a 300 ms window running, 0.0 stopped, 326 running again.
+
+    Those counts are the assertion; they are deliberately not divided into a scan rate.
+    A 300 ms window bracketed by two ~7 ms round trips is too short to measure one -- the
+    round trips alone are 5 % of it -- and dividing anyway is how this repository came to
+    carry ~1024, ~1029 and 1018 for the same quantity. The rate is quoted from
+    ``docs/hardware.md`` section 17, which took a 20 s window from both hosts.
     """
     async with controller() as plc:
         assert await plc.remote.status() is CpuStatus.RUN
