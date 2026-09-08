@@ -13,7 +13,10 @@ in (``Y20`` is output 16 on an iQ-F and output 32 on an iQ-R, and **both CPUs an
 to ``mypy`` with no ``cast`` at the call site; the marker in the second position is what
 this library reads to decide the field is one double-word access point rather than two
 registers. That is the whole trick, and it is why the aliases are ``Annotated`` rather
-than ``NewType`` or a class of their own.
+than ``NewType`` or a class of their own. (The bare type of the run-time object is a
+private ``float`` subclass rather than ``float`` itself, so that ``F32(minimum=...,
+maximum=...)`` can evaluate; see :func:`_declaring`. A type checker sees ``float``, and
+``tests/typing/consumer.py`` fails the build if it ever stops.)
 
 **Why ``at()`` rather than ``field(device=...)``.** ``dataclasses.field`` is a name every
 Python programmer already has bound, and a block class body is exactly where they would
@@ -42,14 +45,38 @@ first**, which is exactly the FX5U's f32 convention -- proved four ways on
 FX5U-32MT/DS fw 1.065 (2026-09-06), including writing 1234.5 as one ``1402`` double-word
 point and reading back ``D104 = 0x5000``, ``D105 = 0x449A``. There is no byte-swapping
 helper in this library and there is none here.
+
+**Plausibility bounds, and the one thing they are not.** A D register carries no type on
+the wire: sixteen bits are sixteen bits, and a field declared ``U32`` over a register
+pair the PLC program writes as a ``REAL`` decodes to a large, plausible integer with end
+code ``0x0000``. Nothing in the protocol can detect that, and this library does not try
+-- it never guesses a register's type and never sniffs whether a value "looks like" a
+float. What it can do is hold a caller to a promise they made in the declaration::
+
+    scan: Annotated[float, F32(minimum=0.0, maximum=1.0e7)]
+
+:class:`Bounds` are that promise, they are optional, and an unbounded field behaves
+exactly as it did before they existed. When one is broken the read raises
+:class:`SlmpImplausibleValueError` rather than returning a number nothing can stand
+behind, and a write outside the declared range raises
+:class:`~aslmp.errors.SlmpValueRangeError` before a byte leaves this process.
 """
 
 from __future__ import annotations
 
+import dataclasses
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, Final, Literal, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, Protocol, TypeAlias
 
-from aslmp.errors import SlmpBlockLayoutError
+from aslmp.errors import (
+    ClientSummary,
+    Diagnostics,
+    SlmpBlockLayoutError,
+    SlmpConfigurationError,
+    SlmpSemanticError,
+    SlmpValueRangeError,
+)
 from aslmp.wire.address import DeviceAddress
 from aslmp.wire.citations import Citation, Measurement, Source
 
@@ -58,6 +85,7 @@ __all__ = [
     "F64",
     "I16",
     "I32",
+    "IMPLAUSIBLE_VALUE_FINDING",
     "STRING_WORDS",
     "U16",
     "U32",
@@ -67,15 +95,21 @@ __all__ = [
     "BitSpec",
     "BlockTiming",
     "BlockTransaction",
+    "Bounds",
     "FieldOverride",
     "FieldSpec",
     "NumberSpec",
     "PlcBlock",
     "PointKind",
+    "SlmpImplausibleValueError",
     "Str",
     "StringSpec",
     "Word",
     "at",
+    "check_reading",
+    "implausible",
+    "outside",
+    "refuse_write",
     "string_words",
 ]
 
@@ -120,6 +154,281 @@ STRING_WORDS: Final = Citation(
         "declared length is even, and the PLC program's own $MOV wrote one."
     ),
 )
+
+
+# ========================================================================================
+# Plausibility bounds -- a promise the caller makes, never a guess this library makes
+# ========================================================================================
+
+
+IMPLAUSIBLE_VALUE_FINDING: Final = Measurement(
+    cpu="FX5U-32MT/DS",
+    firmware="1.065",
+    date="2026-09-07",
+    note=(
+        "A field declared U32 over D8/D9, which the CPU's own ST writes as "
+        "IO_Scan := IO_Scan + 1.0, returned 1226168560 with end code 0x0000. That is "
+        "the f32 613775.0 read as an unsigned double word, and it is undetectable in "
+        "band: a D register carries no type on the wire. It is also undetectable by "
+        "the obvious sanity check, because IEEE-754 bit patterns rise monotonically "
+        "for positive floats, so the mis-typed counter still increased every cycle -- "
+        "the only symptom was its rate. That rate is wrong by a factor that is not "
+        "even constant: +1.0 in the REAL moves the U32 reading by one ulp-step, which "
+        "is 16 at the 613775.0 measured here and halves every time the counter crosses "
+        "a power of two (8 above 2^20, 4 above 2^21). A wrong rate that drifts is "
+        "harder to notice than a wrong rate that does not. Bounds exist for this."
+    ),
+)
+
+_REPRESENTABLE: Final[Mapping[str, tuple[float, float]]] = {
+    "H": (0.0, 65535.0),
+    "h": (-32768.0, 32767.0),
+    "I": (0.0, 4294967295.0),
+    "i": (-2147483648.0, 2147483647.0),
+    "f": (-3.4028234663852886e38, 3.4028234663852886e38),
+    "d": (-1.7976931348623157e308, 1.7976931348623157e308),
+}
+"""What each field width can hold at all, keyed by its ``struct`` format character.
+
+Keyed on the format character rather than on ``kind`` because ``F64`` is four registers
+read as two ``u32`` access points: its ``kind`` says how the *wire* carries it and its
+``struct_code`` says what the value is. A bound outside the row for its own field is
+refused at class-definition time -- ``U16(maximum=70000)`` can never fire and
+``U16(minimum=70000)`` fires on every read, and both are the declaration being wrong
+rather than the plant being wrong.
+"""
+
+
+def outside(value: float, minimum: float | None, maximum: float | None) -> bool:
+    """Whether ``value`` breaks the promise ``minimum`` and ``maximum`` make.
+
+    **Allocates nothing**, which is why it is a module-level function and not a method
+    on :class:`Bounds`: ``bounds.excludes(v)`` builds a bound-method object on every
+    call and a block read calls this once per bounded field per cycle
+    (``tests/unit/test_blocks_bounds.py`` measures it, the way ``LatencyRecorder``'s
+    own no-allocation property is measured).
+
+    Only meaningful for a field that declared at least one bound; a NaN counts as
+    outside, because a register pair that decodes to a NaN is inside no range anybody
+    could have meant.
+    """
+    if minimum is not None and value < minimum:
+        return True
+    if maximum is not None and value > maximum:
+        return True
+    return value != value
+
+
+@dataclass(frozen=True, slots=True)
+class Bounds:
+    """The range a caller **promises** a field's value lies inside. Not type inference.
+
+    Optional on every field and absent by default. This is a tool for people who know
+    their process ranges -- a tank level is 0 to 100 percent, a scan counter is positive
+    and under ten million -- and it is deliberately not a ceremony every declaration has
+    to perform.
+
+    What it is not: evidence about the register. Nothing here inspects the bytes to
+    decide what type they are, because nothing on the wire could support that. A bound
+    that fires says the value disagrees with the declaration; it does not say which of
+    the two is wrong, and :class:`SlmpImplausibleValueError` says so in as many words.
+    """
+
+    minimum: float | None = None
+    maximum: float | None = None
+
+    def __post_init__(self) -> None:
+        for name, value in (("minimum", self.minimum), ("maximum", self.maximum)):
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                raise SlmpBlockLayoutError(
+                    f"a {name} bound is a number, not {type(value).__name__}."
+                )
+            if value != value:
+                raise SlmpBlockLayoutError(
+                    f"a {name} bound of NaN compares false against every value, so it "
+                    f"would silently never fire. Leave it out to declare no bound."
+                )
+        if (
+            self.minimum is not None
+            and self.maximum is not None
+            and self.minimum > self.maximum
+        ):
+            raise SlmpBlockLayoutError(
+                f"minimum={self.minimum!r} is above maximum={self.maximum!r}, so no "
+                f"value can ever be inside this range and every read would raise."
+            )
+
+    @property
+    def declared(self) -> bool:
+        """Whether either end was given. A :class:`Bounds` with neither promises nothing."""
+        return self.minimum is not None or self.maximum is not None
+
+    def excludes(self, value: float) -> bool:
+        """Whether ``value`` is outside this range. :func:`outside` is the hot-path form."""
+        return outside(value, self.minimum, self.maximum)
+
+    def __str__(self) -> str:
+        low = "no minimum" if self.minimum is None else repr(self.minimum)
+        high = "no maximum" if self.maximum is None else repr(self.maximum)
+        return f"[{low} .. {high}]"
+
+
+class SlmpImplausibleValueError(SlmpSemanticError):
+    """A value arrived intact and outside the range its field declares.
+
+    A :class:`~aslmp.errors.SlmpSemanticError` because that is exactly what happened:
+    the PLC answered ``0x0000``, the frame parsed, the registers are the registers it
+    sent -- and the number is still not one the caller can use. Nothing was retried and
+    nothing was clamped.
+
+    Carries ``field``, ``bounds``, ``value``, ``address`` and the ``registers`` the
+    value was decoded from, because "1226168560 is out of range" is not actionable and
+    "D8/D9 held 0xD8F0 0x4915" is: those are the bytes, and they are the same bytes
+    whichever type they were read as (:data:`IMPLAUSIBLE_VALUE_FINDING`).
+
+    .. note::
+
+       This class belongs in the DESIGN.md section 3.1 tree beside the other
+       :class:`~aslmp.errors.SlmpError` subclasses and should move to
+       ``aslmp/errors/__init__.py`` when that module is next opened -- the same note
+       :class:`aslmp.loop.SlmpCadenceOverrunError` carries, for the same reason. It is
+       defined here because bounds are declared here and ``errors/`` was closed when
+       this was written.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        field: str,
+        bounds: Bounds,
+        value: float,
+        address: str,
+        registers: tuple[int, ...],
+        diagnostics: Diagnostics | None = None,
+    ) -> None:
+        super().__init__(message, diagnostics=diagnostics)
+        self.field = field
+        self.bounds = bounds
+        self.minimum = bounds.minimum
+        self.maximum = bounds.maximum
+        self.value = value
+        self.address = address
+        self.registers = registers
+
+
+_GLOBAL_LABEL: Final = (
+    "A D register carries no type on the wire -- sixteen bits are sixteen bits -- so "
+    "nothing here can tell a wrong declaration from a wrong process value, and nothing "
+    "here guesses. The common cause is a declared type that disagrees with the PLC "
+    "program's own global label: an f32 read as U32 returns a large integer that is "
+    "really the float's bit pattern, and because IEEE-754 patterns rise monotonically "
+    "for positive floats it even keeps counting up. Check the type in GX Works3 under "
+    "Label -> Global Label, in the Data Type column, and declare what it says there."
+)
+
+
+def implausible(
+    *,
+    field: str,
+    bounds: Bounds,
+    value: float,
+    address: str,
+    registers: tuple[int, ...],
+    diagnostics: Diagnostics | None = None,
+) -> SlmpImplausibleValueError:
+    """Build the refusal for one out-of-range read. The cold path; allocation is fine here.
+
+    A function rather than a constructor call at each site so that the sentence a person
+    reads at 3 a.m. is written once. It is deliberately long: this is the one failure
+    whose cause is almost never where the traceback points.
+    """
+    words = " ".join(f"0x{register:04X}" for register in registers)
+    return SlmpImplausibleValueError(
+        f"{field} read {value!r} from {address}, which is outside the declared range "
+        f"{bounds}. The end code was 0x0000 and the registers on the wire were {words}, "
+        f"so nothing failed and nothing was retried. {_GLOBAL_LABEL} If the declaration "
+        f"is right and the plant really did go there, the bound is what you asked for.",
+        field=field,
+        bounds=bounds,
+        value=value,
+        address=address,
+        registers=registers,
+        diagnostics=diagnostics,
+    )
+
+
+def refuse_write(
+    *, field: str, label: str, bounds: Bounds, value: float, address: str
+) -> SlmpValueRangeError:
+    """Build the refusal for one out-of-range write. Raised **before** anything is sent.
+
+    A :class:`~aslmp.errors.SlmpValueRangeError` and therefore a
+    :class:`~aslmp.errors.SlmpUsageError`, which in DESIGN section 3.1 means precisely
+    "no byte left this process" -- and it did not. The read-side
+    :class:`SlmpImplausibleValueError` is a *semantic* error because there the PLC
+    answered; here there is nothing to answer.
+    """
+    return SlmpValueRangeError(
+        f"field {field} is declared {label} with bounds {bounds} and was given "
+        f"{value!r}, which is outside them. Nothing here clamps to fit: a setpoint "
+        f"quietly pulled back to the top of its range is a different setpoint written "
+        f"to the plant. Nothing was sent. Change the value, or change the bounds on "
+        f"{field} ({address}) if the range you declared is not the range you meant."
+    )
+
+
+def check_reading(
+    value: float,
+    minimum: float | None,
+    maximum: float | None,
+    *,
+    field: str,
+    address: object,
+    registers: Sequence[int],
+    client: ClientSummary | None = None,
+) -> None:
+    """Hold one freshly decoded value to the bounds a caller passed. Raises, or returns.
+
+    The shared enforcement behind ``plc.read_f32("D0", minimum=..., maximum=...)``.
+    Returns immediately when neither bound was given, which is the cost of the feature
+    for every caller who does not use it: one call and two ``is None`` tests, no
+    allocation, no branch taken.
+
+    ``address`` is an ``object`` and ``client`` is the client rather than a built
+    :class:`~aslmp.errors.Diagnostics`, both for the same reason: a read that passes
+    must not pay for the report of a read that fails. Neither is rendered, and the
+    diagnostic bundle is not built, until the path that is about to raise.
+    """
+    if minimum is None and maximum is None:
+        return
+    if minimum is not None and minimum != minimum:
+        raise SlmpConfigurationError(
+            f"{field}: a minimum of NaN compares false against every value, so it "
+            f"would silently never fire. Leave it out to ask for no bound."
+        )
+    if maximum is not None and maximum != maximum:
+        raise SlmpConfigurationError(
+            f"{field}: a maximum of NaN compares false against every value, so it "
+            f"would silently never fire. Leave it out to ask for no bound."
+        )
+    if minimum is not None and maximum is not None and minimum > maximum:
+        raise SlmpConfigurationError(
+            f"{field}: minimum={minimum!r} is above maximum={maximum!r}, so no value "
+            f"could ever be inside the range and every read would raise."
+        )
+    if not outside(value, minimum, maximum):
+        return
+    raise implausible(
+        field=field,
+        bounds=Bounds(minimum, maximum),
+        value=value,
+        address=str(address),
+        registers=tuple(registers),
+        diagnostics=None if client is None else Diagnostics(client=client),
+    )
 
 
 # ========================================================================================
@@ -250,6 +559,28 @@ class NumberSpec:
     kind: PointKind
     """The :class:`~aslmp.commands.random.RandomPoint` kind one point of this field is."""
 
+    bounds: Bounds | None = None
+    """The optional plausibility range this field promises. ``None`` promises nothing."""
+
+    def __post_init__(self) -> None:
+        bounds = self.bounds
+        if bounds is None:
+            return
+        if not bounds.declared:
+            raise SlmpBlockLayoutError(
+                f"{self.label}() was given no bounds. A field with no range to promise "
+                f"is spelled `{self.label}`; the call form is for declaring one."
+            )
+        low, high = _REPRESENTABLE[self.struct_code]
+        for name, value in (("minimum", bounds.minimum), ("maximum", bounds.maximum)):
+            if value is not None and not low <= value <= high:
+                raise SlmpBlockLayoutError(
+                    f"{self.label}({name}={value!r}) is outside what a {self.label} can "
+                    f"hold at all ({low!r} to {high!r}). A bound the field's own width "
+                    f"cannot reach either never fires or fires on every read, and both "
+                    f"of those are the declaration being wrong rather than the plant."
+                )
+
     @property
     def points(self) -> int:
         """How many access points this field costs: 1, or 2 for an ``F64``."""
@@ -366,29 +697,105 @@ _F32: Final = NumberSpec("F32", "float", 2, "f", "f32")
 _F64: Final = NumberSpec("F64", "float", 4, "d", "u32")
 _BIT: Final = BitSpec()
 
-Word = Annotated[int, _WORD]
+
+def _declaring(spec: NumberSpec, base: type) -> type:
+    """The run-time bare type of one alias: ``base``, plus the bounds constructor.
+
+    ``F32(minimum=0.0, maximum=1.0e7)`` has to *evaluate* -- it is the spelling the
+    README documents -- and ``Annotated[X, ...](...)`` calls ``X``. Making ``X`` plain
+    ``float`` would make that call ``float(minimum=..., maximum=...)``, which is a
+    ``TypeError``, so the bare type is a ``float`` (or ``int``) subclass whose ``__new__``
+    returns a bounded :class:`NumberSpec` instead of a number.
+
+    **It is never instantiated as a value.** A field's decoded value comes from
+    ``struct.unpack`` and is an ordinary ``float`` or ``int``; this class exists only so
+    that the alias is callable. ``issubclass(bare, float)`` holds, so every run-time
+    introspection of the alias stays true.
+    """
+
+    def declare(
+        cls: type,
+        *,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> Any:
+        """``__new__``, under a name ``ruff``'s N807 does not read as a dunder helper."""
+        del cls
+        return dataclasses.replace(spec, bounds=Bounds(minimum, maximum))
+
+    return type(
+        f"_{spec.label}Declaration",
+        (base,),
+        {
+            "__slots__": (),
+            "__new__": declare,
+            "__doc__": f"The run-time bare type of {spec.label}. See _declaring().",
+        },
+    )
+
+
+if TYPE_CHECKING:
+    # A type checker must see the bare type of every numeric alias as exactly ``float``
+    # or ``int`` -- graft G13, and ``tests/typing/consumer.py`` asserts it with
+    # ``assert_type(state.setpoint, float)``. It never sees the subclass above, whose
+    # only job is to make the alias callable at run time, and it never sees the call
+    # either: ``mypy`` does not analyse the metadata position of an ``Annotated``.
+    # This is the whole of the divergence, it is one line per alias, and it is a
+    # narrowing rather than a lie -- the run-time class *is* a ``float``/``int``.
+    _WordDeclaration: TypeAlias = int
+    _U16Declaration: TypeAlias = int
+    _I16Declaration: TypeAlias = int
+    _U32Declaration: TypeAlias = int
+    _I32Declaration: TypeAlias = int
+    _F32Declaration: TypeAlias = float
+    _F64Declaration: TypeAlias = float
+else:
+    _WordDeclaration = _declaring(_WORD, int)
+    _U16Declaration = _declaring(_U16, int)
+    _I16Declaration = _declaring(_I16, int)
+    _U32Declaration = _declaring(_U32, int)
+    _I32Declaration = _declaring(_I32, int)
+    _F32Declaration = _declaring(_F32, float)
+    _F64Declaration = _declaring(_F64, float)
+
+Word = Annotated[_WordDeclaration, _WORD]
 """One register, unsigned, with no interpretation imposed on it."""
 
-U16 = Annotated[int, _U16]
+U16 = Annotated[_U16Declaration, _U16]
 """One register, 0..65535."""
 
-I16 = Annotated[int, _I16]
+I16 = Annotated[_I16Declaration, _I16]
 """One register, -32768..32767."""
 
-U32 = Annotated[int, _U32]
+U32 = Annotated[_U32Declaration, _U32]
 """One double-word access point: two registers, low word first, unsigned."""
 
-I32 = Annotated[int, _I32]
+I32 = Annotated[_I32Declaration, _I32]
 """One double-word access point: two registers, low word first, signed."""
 
-F32 = Annotated[float, _F32]
-"""One double-word access point: one IEEE-754 float, natively (:data:`WORD_ORDER_PROOF`)."""
+F32 = Annotated[_F32Declaration, _F32]
+"""One double-word access point: one IEEE-754 float, natively (:data:`WORD_ORDER_PROOF`).
 
-F64 = Annotated[float, _F64]
+Also the way a bounded field is declared. ``F32(minimum=0.0, maximum=1.0e7)`` returns
+the same field with a :class:`Bounds` on it, for the metadata position of an
+``Annotated``::
+
+    scan: Annotated[float, F32(minimum=0.0, maximum=1.0e7)]
+
+That position, and not the default slot, because the bare type written there is what a
+type checker reads: ``state.scan`` stays exactly ``float`` and the call is never
+analysed as an attempt to build one. Every numeric alias takes the same two keywords.
+"""
+
+F64 = Annotated[_F64Declaration, _F64]
 """Two double-word access points: four registers, low word first, IEEE-754 double."""
 
 Bit = Annotated[bool, _BIT]
-"""One bit of a bit device. Folded into a shared 16-point window; needs :func:`at`."""
+"""One bit of a bit device. Folded into a shared 16-point window; needs :func:`at`.
+
+The one alias with no bounds constructor: a ``bool`` has two values and neither of them
+is implausible.
+"""
 
 
 # ========================================================================================

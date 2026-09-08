@@ -38,6 +38,7 @@ from aslmp.blocks.fields import (
     AddressLike,
     BitSpec,
     BlockTransaction,
+    Bounds,
     FieldOverride,
     FieldSpec,
     NumberSpec,
@@ -137,10 +138,21 @@ class FieldPlan:
 
     @property
     def label(self) -> str:
-        """``"F32"``, ``"Bit"``, ``"Str(8)"`` -- what ``describe()`` prints."""
+        """``"F32"``, ``"Bit"``, ``"Str(8)"`` -- what ``describe()`` prints.
+
+        A bounded field keeps the plain label. The range is a column of its own in
+        ``describe()``, because a Mitsubishi engineer reading that table is looking down
+        the type column for the one that disagrees with a global label.
+        """
         if isinstance(self.spec, StringSpec):
             return f"Str({self.spec.length})"
         return self.spec.label
+
+    @property
+    def bounds(self) -> Bounds | None:
+        """The plausibility range this field promises, or ``None`` for most fields."""
+        spec = self.spec
+        return spec.bounds if isinstance(spec, NumberSpec) else None
 
     def __str__(self) -> str:
         where = self.address if self.address is not None else f"base+{self.word_offset}"
@@ -410,6 +422,16 @@ def _spec_for(
     block: type, name: str, hint: object, override: FieldOverride | None
 ) -> FieldSpec:
     """The one :class:`FieldSpec` this annotation and default declare, or a refusal."""
+    if isinstance(hint, NumberSpec):
+        raise SlmpBlockLayoutError(
+            f"{block.__name__}.{name} is annotated with the *result* of "
+            f"{hint.label}(...) rather than with a type. A bounded field is declared in "
+            f"the metadata position of an Annotated, where the bare type stays visible "
+            f"to a type checker: `{name}: Annotated[{hint.python}, "
+            f"{hint.label}(minimum=..., maximum=...)]`. Written the way you have it, "
+            f"mypy reads the annotation as a call and refuses it, and {name} would be "
+            f"typed by nothing at all."
+        )
     metadata = getattr(hint, "__metadata__", ())
     marks = [item for item in metadata if isinstance(item, NumberSpec | BitSpec)]
     string = None if override is None else override.string
@@ -433,7 +455,10 @@ def _spec_for(
             )
         return string
     if marks:
-        return marks[0]
+        mark = marks[0]
+        if isinstance(mark, NumberSpec):
+            _check_bare_type(block, name, hint, mark)
+        return mark
     raise SlmpBlockLayoutError(
         f"{block.__name__}.{name} is annotated {_render(hint)}, which says nothing "
         f"about how many registers it occupies or how they decode. Declare it with one "
@@ -441,6 +466,34 @@ def _spec_for(
         f"`{name}: str = Str(length=...)`. There is no default width: a field silently "
         f"read as one register when the program stores two returns the low half of the "
         f"value with end code 0x0000."
+    )
+
+
+_PYTHON_TYPES: Final[Mapping[str, type]] = {"int": int, "float": float}
+"""The bare type each numeric field is read back as. There is no third one."""
+
+
+def _check_bare_type(block: type, name: str, hint: object, spec: NumberSpec) -> None:
+    """The bare half of an ``Annotated`` must agree with the alias in its metadata.
+
+    Free before bounds existed, because the alias wrote both halves itself. It is worth
+    checking now that a caller writes one of them by hand:
+    ``Annotated[int, F32(minimum=0.0)]`` would otherwise decode two registers as a float
+    and hand it back through an annotation that promised an ``int``, which is the same
+    class of silent wrong answer bounds are here to close.
+    """
+    expected = _PYTHON_TYPES.get(spec.python)
+    bare = getattr(hint, "__origin__", None)
+    if expected is None or not isinstance(bare, type):  # pragma: no cover - an invariant
+        return
+    if bare is not bool and issubclass(bare, expected):
+        return
+    raise SlmpBlockLayoutError(
+        f"{block.__name__}.{name} is annotated Annotated[{_render(bare)}, "
+        f"{spec.label}(...)], and a {spec.label} reads back as a {spec.python}. Write "
+        f"`Annotated[{spec.python}, {spec.label}(minimum=..., maximum=...)]`: the bare "
+        f"type is the one your call site is handed, and it is the half a type checker "
+        f"reads."
     )
 
 

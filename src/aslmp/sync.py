@@ -443,42 +443,123 @@ class Plc:
         """One bit device, as a ``bool``. ``0x0401`` in bit units."""
         return self._runtime.submit(self._plc.read_bit(address))
 
-    def read_i16(self, address: AddressLike, /) -> int:
-        """One register as a signed 16-bit integer."""
-        return self._runtime.submit(self._plc.read_i16(address))
+    def read_i16(
+        self,
+        address: AddressLike,
+        /,
+        *,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> int:
+        """One register as a signed 16-bit integer.
 
-    def read_u16(self, address: AddressLike, /) -> int:
-        """One register as an unsigned 16-bit integer."""
-        return self._runtime.submit(self._plc.read_u16(address))
+        ``minimum`` and ``maximum`` are the optional plausibility bounds of the
+        async call of the same name, and mean exactly what they mean there.
+        """
+        return self._runtime.submit(
+            self._plc.read_i16(address, minimum=minimum, maximum=maximum)
+        )
+
+    def read_u16(
+        self,
+        address: AddressLike,
+        /,
+        *,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> int:
+        """One register as an unsigned 16-bit integer.
+
+        ``minimum`` and ``maximum`` are the optional plausibility bounds of the
+        async call of the same name, and mean exactly what they mean there.
+        """
+        return self._runtime.submit(
+            self._plc.read_u16(address, minimum=minimum, maximum=maximum)
+        )
 
     def read_i32(
-        self, address: AddressLike, /, *, word_order: WordOrder | None = None
+        self,
+        address: AddressLike,
+        /,
+        *,
+        word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> int:
-        """Two consecutive registers as a signed 32-bit integer."""
-        return self._runtime.submit(self._plc.read_i32(address, word_order=word_order))
+        """Two consecutive registers as a signed 32-bit integer.
+
+        ``minimum`` and ``maximum`` are the optional plausibility bounds of the
+        async call of the same name, and mean exactly what they mean there.
+        """
+        return self._runtime.submit(
+            self._plc.read_i32(
+                address, word_order=word_order, minimum=minimum, maximum=maximum
+            )
+        )
 
     def read_u32(
-        self, address: AddressLike, /, *, word_order: WordOrder | None = None
+        self,
+        address: AddressLike,
+        /,
+        *,
+        word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> int:
-        """Two consecutive registers as an unsigned 32-bit integer."""
-        return self._runtime.submit(self._plc.read_u32(address, word_order=word_order))
+        """Two consecutive registers as an unsigned 32-bit integer.
+
+        ``minimum`` and ``maximum`` are the optional plausibility bounds of the
+        async call of the same name, and mean exactly what they mean there.
+        """
+        return self._runtime.submit(
+            self._plc.read_u32(
+                address, word_order=word_order, minimum=minimum, maximum=maximum
+            )
+        )
 
     def read_f32(
-        self, address: AddressLike, /, *, word_order: WordOrder | None = None
+        self,
+        address: AddressLike,
+        /,
+        *,
+        word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> float:
         """Two consecutive registers as one IEEE-754 single.
 
         Low word first, measured four ways on FX5U-32MT/DS fw 1.065: 1234.5 written as
         one double-word point put ``00 50 9A 44`` on the wire and read back
         ``D104 = 0x5000``, ``D105 = 0x449A`` (2026-09-06).
+
+        ``minimum`` and ``maximum`` are the optional plausibility bounds of the
+        async call of the same name, and mean exactly what they mean there.
         """
-        return self._runtime.submit(self._plc.read_f32(address, word_order=word_order))
+        return self._runtime.submit(
+            self._plc.read_f32(
+                address, word_order=word_order, minimum=minimum, maximum=maximum
+            )
+        )
 
     def read_f64(
-        self, address: AddressLike, /, *, word_order: WordOrder | None = None
+        self,
+        address: AddressLike,
+        /,
+        *,
+        word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> float:
-        """Four consecutive registers as one IEEE-754 double."""
-        return self._runtime.submit(self._plc.read_f64(address, word_order=word_order))
+        """Four consecutive registers as one IEEE-754 double.
+
+        ``minimum`` and ``maximum`` are the optional plausibility bounds of the
+        async call of the same name, and mean exactly what they mean there.
+        """
+        return self._runtime.submit(
+            self._plc.read_f64(
+                address, word_order=word_order, minimum=minimum, maximum=maximum
+            )
+        )
 
     def read_str(
         self, address: AddressLike, /, *, length: int, encoding: str = "ascii"

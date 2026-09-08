@@ -53,8 +53,12 @@ from aslmp.blocks.fields import (
     STRING_WORDS,
     WORD_ORDER_PROOF,
     BitSpec,
+    Bounds,
     NumberSpec,
     StringSpec,
+    implausible,
+    outside,
+    refuse_write,
 )
 from aslmp.blocks.layout import (
     BitFold,
@@ -195,6 +199,7 @@ class _Reader:
     __slots__ = (
         "_ascii",
         "_bits",
+        "_bounds",
         "_buffer",
         "_codec",
         "_expected",
@@ -288,6 +293,7 @@ class _Reader:
         plain: list[tuple[int, str]] = []
         strings: list[tuple[int, str, str]] = []
         bits_at: list[tuple[int, str, int]] = []
+        bounded: list[tuple[int, str, float | None, float | None, Bounds, str, str]] = []
         clock: int | None = None
         for index, group in enumerate(self.groups):
             if group.clock:
@@ -300,9 +306,25 @@ class _Reader:
                 strings.append((index, group.field.name, group.field.spec.encoding))
             else:
                 plain.append((index, group.field.name))
+                limits = group.field.bounds
+                if limits is not None:
+                    bounded.append(
+                        (
+                            index,
+                            group.field.name,
+                            limits.minimum,
+                            limits.maximum,
+                            limits,
+                            str(_address(group.points[0])),
+                            group.struct_code,
+                        )
+                    )
         self._plain: tuple[tuple[int, str], ...] = tuple(plain)
         self._strings: tuple[tuple[int, str, str], ...] = tuple(strings)
         self._bits: tuple[tuple[int, str, int], ...] = tuple(bits_at)
+        self._bounds: tuple[
+            tuple[int, str, float | None, float | None, Bounds, str, str], ...
+        ] = tuple(bounded)
         self.clock_index: int | None = clock
         wire_words = sum(point.words for point in points)
         if self._struct.size != 2 * wire_words:  # pragma: no cover - an invariant
@@ -357,13 +379,47 @@ class _Reader:
         )
 
     def fill(self, values: tuple[Any, ...], into: dict[str, Any]) -> None:
-        """Turn one unpacked response into field values, by name."""
+        """Turn one unpacked response into field values, by name.
+
+        The bounds pass at the end is the only part of the hot path that can refuse a
+        response the PLC answered ``0x0000`` to. It **allocates nothing**: the table it
+        walks was built at bind, the two ends are stored beside the
+        :class:`~aslmp.blocks.fields.Bounds` rather than read off it, and
+        :func:`~aslmp.blocks.fields.outside` is a module-level function so that no bound
+        method is created per field per cycle. A block that declares no bounds -- which
+        is most blocks -- walks an empty tuple and pays a loop that does not run.
+        """
         for index, name in self._plain:
             into[name] = values[index]
         for index, name, encoding in self._strings:
             into[name] = _text(values[index], name, encoding, self.summary.text)
         for index, name, bit in self._bits:
             into[name] = bool(values[index] >> bit & 1)
+        for index, name, minimum, maximum, limits, where, code in self._bounds:
+            value = values[index]
+            if outside(value, minimum, maximum):
+                raise implausible(
+                    field=name,
+                    bounds=limits,
+                    value=value,
+                    address=where,
+                    registers=_registers(value, code),
+                )
+
+
+def _registers(value: float, struct_code: str) -> tuple[int, ...]:
+    """The registers a decoded value came from, re-derived for the refusal that names them.
+
+    The cold path only: a bound has already fired and the frame is about to be described
+    to a person. Re-packing is exact rather than approximate -- the decoder is one
+    ``struct`` over the whole response and this is the same format character for the same
+    field, so these are the words the PLC actually sent, low word first
+    (:data:`~aslmp.blocks.fields.WORD_ORDER_PROOF`).
+    """
+    raw = struct.pack(f"<{struct_code}", value)
+    return tuple(
+        int.from_bytes(raw[at : at + 2], "little") for at in range(0, len(raw), 2)
+    )
 
 
 def _text(value: object, name: str, encoding: str, what: str) -> str:
@@ -536,16 +592,33 @@ class _Bound(Generic[B]):
         ]
 
     def _field_table(self) -> list[str]:
+        """The field table, with each field's declared bounds beside it.
+
+        The bounds column is printed because this report is the artifact a Mitsubishi
+        engineer reads against GX Works3's ``Label -> Global Label`` view (graft G9). A
+        range that disagrees with the process is the same question as a type that
+        disagrees with the label, and both are answered from this one table. Fields that
+        promise nothing say ``--`` rather than nothing, so an empty column is never
+        mistaken for a bound of zero.
+        """
         rows = [
-            (name, label, where, words if words == "folded" else f"{words} word(s)")
-            for name, label, where, words in self.layout.table()
+            (
+                name,
+                label,
+                where,
+                words if words == "folded" else f"{words} word(s)",
+                "--" if plan.bounds is None else str(plan.bounds),
+            )
+            for (name, label, where, words), plan in zip(
+                self.layout.table(), self.layout.fields, strict=True
+            )
         ]
         widths = [max(len(row[column]) for row in rows) for column in range(4)]
         out = ["  fields:"]
         out.extend(
             f"    {name:<{widths[0]}}  {label:<{widths[1]}}  "
-            f"{where:<{widths[2]}}  {words}"
-            for name, label, where, words in rows
+            f"{where:<{widths[2]}}  {words:<{widths[3]}}  {bounds}"
+            for name, label, where, words, bounds in rows
         )
         return out
 
@@ -885,8 +958,35 @@ class _Writer:
         writes: list[RandomWrite] = []
         for name in named_words:
             address, field = self.fields[name]
+            _refuse_out_of_range(field, address, fields[name])
             writes.extend(_write_points(address, field, fields[name]))
         await plc._run(WriteRandom(tuple(writes)), mutates=True)
+
+
+def _refuse_out_of_range(field: FieldPlan, address: DeviceAddress, value: object) -> None:
+    """A value outside a field's declared bounds never reaches the PLC.
+
+    Checked on the way out as well as on the way in, because a bound is a statement about
+    what may be in that register and a write is the other way something gets there.
+    Deliberately **not** inside :func:`_write_points`: that function also builds the
+    all-zero write template at bind, and a field declared ``minimum=1.0`` would turn its
+    own plausibility bound into "this block has no write template" -- a silent loss of
+    the prebuilt path, reported as a refusal about something else entirely.
+
+    Type refusals are left to :func:`_as_int` and :func:`_as_float`, which say the right
+    thing about them; this only judges numbers.
+    """
+    limits = field.bounds
+    if limits is None or isinstance(value, bool) or not isinstance(value, int | float):
+        return
+    if outside(value, limits.minimum, limits.maximum):
+        raise refuse_write(
+            field=field.name,
+            label=field.label,
+            bounds=limits,
+            value=value,
+            address=str(address),
+        )
 
 
 def _as_bool(value: object, name: str) -> bool:

@@ -27,6 +27,7 @@ import struct
 from collections.abc import Sequence
 from typing import Literal, overload
 
+from aslmp.blocks.fields import check_reading
 from aslmp.client import (
     Plc,
     _fits,
@@ -72,52 +73,162 @@ class TimedApi:
         values, tx = await self._plc._run(ReadBits(address, 1), mutates=False)
         return Reading(values[0], tx)
 
-    async def read_i16(self, address: AddressLike, /) -> Reading[int]:
-        """One register as a signed 16-bit integer."""
-        words, tx = await self._plc._run(ReadWords(address, 1), mutates=False)
-        return Reading(signed(words[0], bits=16), tx)
+    async def read_i16(
+        self,
+        address: AddressLike,
+        /,
+        *,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> Reading[int]:
+        """One register as a signed 16-bit integer.
 
-    async def read_u16(self, address: AddressLike, /) -> Reading[int]:
+        ``minimum``/``maximum`` are the per-call form of a block field's declared bounds:
+        a promise **you** make about what may be in that register, enforced on the value
+        that comes back. See :meth:`read_f32`, which is where the promise earns its keep.
+        """
+        words, tx = await self._plc._run(ReadWords(address, 1), mutates=False)
+        value = signed(words[0], bits=16)
+        check_reading(
+            value,
+            minimum,
+            maximum,
+            field="read_i16",
+            address=address,
+            registers=words,
+            client=self._plc,
+        )
+        return Reading(value, tx)
+
+    async def read_u16(
+        self,
+        address: AddressLike,
+        /,
+        *,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> Reading[int]:
         """One register as an unsigned 16-bit integer."""
         words, tx = await self._plc._run(ReadWords(address, 1), mutates=False)
+        check_reading(
+            words[0],
+            minimum,
+            maximum,
+            field="read_u16",
+            address=address,
+            registers=words,
+            client=self._plc,
+        )
         return Reading(words[0], tx)
 
     async def read_i32(
-        self, address: AddressLike, /, *, word_order: WordOrder | None = None
+        self,
+        address: AddressLike,
+        /,
+        *,
+        word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> Reading[int]:
         """Two consecutive registers as a signed 32-bit integer."""
         words, tx = await self._plc._run(ReadWords(address, 2), mutates=False)
         raw = _from_words(words, self._plc._order(word_order))
-        return Reading(int(struct.unpack("<i", raw)[0]), tx)
+        value = int(struct.unpack("<i", raw)[0])
+        check_reading(
+            value,
+            minimum,
+            maximum,
+            field="read_i32",
+            address=address,
+            registers=words,
+            client=self._plc,
+        )
+        return Reading(value, tx)
 
     async def read_u32(
-        self, address: AddressLike, /, *, word_order: WordOrder | None = None
+        self,
+        address: AddressLike,
+        /,
+        *,
+        word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> Reading[int]:
         """Two consecutive registers as an unsigned 32-bit integer."""
         words, tx = await self._plc._run(ReadWords(address, 2), mutates=False)
         raw = _from_words(words, self._plc._order(word_order))
-        return Reading(int(struct.unpack("<I", raw)[0]), tx)
+        value = int(struct.unpack("<I", raw)[0])
+        check_reading(
+            value,
+            minimum,
+            maximum,
+            field="read_u32",
+            address=address,
+            registers=words,
+            client=self._plc,
+        )
+        return Reading(value, tx)
 
     async def read_f32(
-        self, address: AddressLike, /, *, word_order: WordOrder | None = None
+        self,
+        address: AddressLike,
+        /,
+        *,
+        word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> Reading[float]:
         """Two consecutive registers as one IEEE-754 single.
 
         Low word first, measured four ways on FX5U-32MT/DS fw 1.065: 1234.5 written as
         one double-word point put ``00 50 9A 44`` on the wire and read back
         ``D104 = 0x5000``, ``D105 = 0x449A`` (2026-09-06).
+
+        ``minimum`` and ``maximum`` are optional plausibility bounds. A D register
+        carries no type on the wire, so the *width* you ask for is never wrong and the
+        *meaning* can be: two registers a PLC program writes as a ``REAL``, read here as
+        a ``u32``, are a large plausible integer with end code ``0x0000``. This library
+        will not guess which of the two it is looking at, and it will not sniff the
+        bytes; it will hold the value to a range you declare and raise
+        :class:`~aslmp.blocks.fields.SlmpImplausibleValueError` if it is outside.
         """
         words, tx = await self._plc._run(ReadWords(address, 2), mutates=False)
         raw = _from_words(words, self._plc._order(word_order))
-        return Reading(float(struct.unpack("<f", raw)[0]), tx)
+        value = float(struct.unpack("<f", raw)[0])
+        check_reading(
+            value,
+            minimum,
+            maximum,
+            field="read_f32",
+            address=address,
+            registers=words,
+            client=self._plc,
+        )
+        return Reading(value, tx)
 
     async def read_f64(
-        self, address: AddressLike, /, *, word_order: WordOrder | None = None
+        self,
+        address: AddressLike,
+        /,
+        *,
+        word_order: WordOrder | None = None,
+        minimum: float | None = None,
+        maximum: float | None = None,
     ) -> Reading[float]:
         """Four consecutive registers as one IEEE-754 double."""
         words, tx = await self._plc._run(ReadWords(address, 4), mutates=False)
         raw = _from_words(words, self._plc._order(word_order))
-        return Reading(float(struct.unpack("<d", raw)[0]), tx)
+        value = float(struct.unpack("<d", raw)[0])
+        check_reading(
+            value,
+            minimum,
+            maximum,
+            field="read_f64",
+            address=address,
+            registers=words,
+            client=self._plc,
+        )
+        return Reading(value, tx)
 
     async def read_str(
         self, address: AddressLike, /, *, length: int, encoding: str = "ascii"
