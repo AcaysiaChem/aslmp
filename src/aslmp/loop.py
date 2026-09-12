@@ -38,13 +38,13 @@ from __future__ import annotations
 
 import asyncio
 import enum
-import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Final, Self, final
 
+from aslmp._clock import DEFAULT_CLOCK
 from aslmp.errors import Diagnostics, SlmpConfigurationError, SlmpError
 from aslmp.observability import Percentiles
 from aslmp.timing import Clock, Nanos
@@ -197,7 +197,7 @@ class Cadence:
         period: timedelta,
         *,
         on_overrun: OverrunPolicy = OverrunPolicy.RECORD,
-        clock: Clock = time.monotonic_ns,
+        clock: Clock = DEFAULT_CLOCK,
         window: int = 4096,
         sleep: Sleeper = asyncio.sleep,
     ) -> None:

@@ -16,10 +16,13 @@ from __future__ import annotations
 
 import inspect
 import sys
+import time
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
+from aslmp._clock import DEFAULT_CLOCK
 from aslmp.timing import (
     Chunk,
     Nanos,
@@ -30,6 +33,8 @@ from aslmp.timing import (
     Transaction,
     TransactionTiming,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 MS = 1_000_000
 BASE = 1_000_000_000
@@ -509,3 +514,60 @@ def test_timing_never_reaches_for_a_clock_of_its_own() -> None:
     )
     assert "import time" not in body
     assert "monotonic_ns()" not in body
+
+
+def test_the_default_clock_can_actually_resolve_a_millisecond() -> None:
+    """A latency figure quantised to a 16 ms grid is worse than an absent one.
+
+    ``time.monotonic()`` is ``GetTickCount64()`` on Windows before CPython 3.13 and steps
+    at 15.625 ms. This package supports Python 3.11, so on the oldest interpreter it
+    claims, on Windows, every default stamp landed on that grid: a real 6 ms round trip
+    was recorded as 0.0 or 16.0 ms. Measured 2026-09-12 on 3.11.15, Windows 11.
+
+    It went unnoticed because development is on 3.13, where ``monotonic`` resolves to
+    100 ns, and it surfaced only when the library was driven from a 3.11 environment --
+    which is the argument for this test rather than for a docstring.
+
+    Note what this test can and cannot do: it asks the interpreter running it, so on
+    3.13 it would pass even with the coarse clock restored. Its companion,
+    :func:`test_no_module_reaches_for_the_coarse_clock_again`, is the one that bites
+    on every interpreter -- confirmed by mutation. Both exist because neither is
+    sufficient alone.
+    """
+    resolution_s = time.get_clock_info(_clock_name(DEFAULT_CLOCK)).resolution
+    assert resolution_s <= 1e-4, (
+        f"the default clock steps every {resolution_s * 1e3:.3f} ms, so any transaction "
+        f"faster than that is recorded as zero. 'Latency as data' is this package's whole "
+        f"argument; a clock this coarse makes it fiction on the platforms it is coarse on."
+    )
+
+
+def test_no_module_reaches_for_the_coarse_clock_again() -> None:
+    """One source for the default, so the next module cannot pick the wrong one.
+
+    Structural rather than a list: any new module that writes ``time.monotonic_ns``
+    instead of importing :data:`~aslmp._clock.DEFAULT_CLOCK` fails here.
+    """
+    offenders: list[str] = []
+    for path in sorted((REPO_ROOT / "src" / "aslmp").rglob("*.py")):
+        if "__pycache__" in str(path) or path.name == "_clock.py":
+            # _clock.py names the coarse clock in order to say why it is not used.
+            continue
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "monotonic_ns" in line:
+                offenders.append(f"{relative}:{number}: {line.strip()}")
+    listing = "\n  ".join(offenders)
+    assert not offenders, (
+        "these reach for time.monotonic_ns instead of aslmp._clock.DEFAULT_CLOCK, "
+        "which steps at 15.625 ms on Windows before CPython 3.13:\n  " + listing
+    )
+
+
+def _clock_name(clock: object) -> Literal["perf_counter", "monotonic"]:
+    """``time.get_clock_info`` takes a name, and the default is the function itself."""
+    if clock is time.perf_counter_ns:
+        return "perf_counter"
+    if clock is time.monotonic_ns:
+        return "monotonic"
+    raise AssertionError(f"unrecognised default clock {clock!r}")

@@ -41,12 +41,12 @@ from __future__ import annotations
 
 import asyncio
 import enum
-import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Final, final
 
+from aslmp._clock import DEFAULT_CLOCK
 from aslmp.client import Plc
 from aslmp.connection import ConnectionState
 from aslmp.errors import SlmpConfigurationError, SlmpError, SlmpSinkError
@@ -203,7 +203,7 @@ class HealthMonitor:
         unhealthy_after: int = 3,
         healthy_after: int = 2,
         on_change: Callable[[HealthSnapshot], None] | None = None,
-        clock: Clock = time.monotonic_ns,
+        clock: Clock = DEFAULT_CLOCK,
         sleep: Sleeper = asyncio.sleep,
     ) -> None:
         if idle_probe_after <= 0:

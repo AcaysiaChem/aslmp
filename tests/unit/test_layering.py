@@ -60,6 +60,8 @@ EXACT_MODULES: dict[str, float] = {
     # anything heavier here would be imported by that command line for no reason.
     "aslmp.__main__": 9.0,
     "aslmp._version": 0.0,
+    # The one clock the package defaults to. Layer 0 so aslmp.testing can reach it.
+    "aslmp._clock": 0.0,
     "aslmp.profile": 1.0,
     "aslmp.blocks": 5.0,
     "aslmp.blocks.fields": 1.0,

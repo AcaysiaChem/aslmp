@@ -42,11 +42,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import random
-import time
 from collections.abc import Awaitable, Callable
 from types import TracebackType
 from typing import Final, Protocol, Self, final, runtime_checkable
 
+from aslmp._clock import DEFAULT_CLOCK
 from aslmp.client import Plc
 from aslmp.connection import ConnectionState
 from aslmp.errors import (
@@ -237,7 +237,7 @@ class Supervisor:
         client: Plc,
         *,
         policy: ReconnectPolicy,
-        clock: Clock = time.monotonic_ns,
+        clock: Clock = DEFAULT_CLOCK,
         sleep: Sleeper = asyncio.sleep,
     ) -> None:
         self._client = client

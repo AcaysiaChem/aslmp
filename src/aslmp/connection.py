@@ -42,12 +42,12 @@ from __future__ import annotations
 
 import contextlib
 import enum
-import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from itertools import count
 from typing import TYPE_CHECKING, Final, NoReturn, Protocol, final
 
+from aslmp._clock import DEFAULT_CLOCK
 from aslmp.errors import (
     NO_DIAGNOSTICS,
     Diagnostics,
@@ -573,7 +573,7 @@ class Connection:
         route: Route = Route.OWN_STATION,
         timeout: float = 3.0,
         concurrency: Concurrency = Concurrency.STRICT,
-        clock: Clock = time.monotonic_ns,
+        clock: Clock = DEFAULT_CLOCK,
         connection_id: str | None = None,
         counters: Counters | None = None,
         events: EventSink | None = None,

@@ -7,7 +7,7 @@ figure and its conditions live). A published number with no control is not a mea
 it is a souvenir of an afternoon. So every run brackets the library's own suites with a raw
 socket that shares **no code with this library**: it builds the 3E binary frame from
 literal bytes and ``struct``, reads the response by its declared length, and stamps
-``time.monotonic_ns`` on either side. If that control cannot run, nothing is printed.
+``aslmp.timing.DEFAULT_CLOCK`` on either side. If that control cannot run, nothing is printed.
 
 **The control runs twice, before and after.** A drift between the two bracketing runs is
 the run telling you the link changed underneath it, and it is far more common on a real
@@ -51,6 +51,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
+from aslmp._clock import DEFAULT_CLOCK
 from aslmp.errors import SlmpError, SlmpUsageError
 from aslmp.tools import EXIT_OK
 from aslmp.tools._common import (
@@ -213,9 +214,9 @@ async def timed_samples(
         raise ValueError("a distribution of no samples is not a measurement")
     timings: list[float] = []
     for index in range(samples + warmup):
-        started = time.monotonic_ns()
+        started = DEFAULT_CLOCK()
         await call()
-        elapsed = (time.monotonic_ns() - started) / 1e6
+        elapsed = (DEFAULT_CLOCK() - started) / 1e6
         if index >= warmup:
             timings.append(elapsed)
     return tuple(timings)
@@ -308,7 +309,7 @@ def raw_control(
         if not udp:
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         for index in range(samples + warmup):
-            started = time.monotonic_ns()
+            started = DEFAULT_CLOCK()
             sock.sendall(request)
             if udp:
                 datagram = sock.recv(65535)
@@ -319,7 +320,7 @@ def raw_control(
                     raise ConnectionError(f"control datagram end code 0x{end_code:04X}")
             else:
                 _control_response(sock, words)
-            elapsed = (time.monotonic_ns() - started) / 1e6
+            elapsed = (DEFAULT_CLOCK() - started) / 1e6
             if index >= warmup:
                 timings.append(elapsed)
     finally:
@@ -497,7 +498,7 @@ async def _run_suite(plc: Plc, name: str, args: argparse.Namespace) -> Distribut
         random_points = [dword(base.offset(2 * step), kind="f32") for step in range(4)]
         blocks = [BlockSpec(base, 2)]
         for index in range(samples + warmup):
-            started = time.monotonic_ns()
+            started = DEFAULT_CLOCK()
             if name == "self-test":
                 await plc.self_test()
             elif name == "batch-1w":
@@ -510,7 +511,7 @@ async def _run_suite(plc: Plc, name: str, args: argparse.Namespace) -> Distribut
                 await plc.read_random(random_points)
             else:
                 await plc.read_blocks(blocks)
-            elapsed = (time.monotonic_ns() - started) / 1e6
+            elapsed = (DEFAULT_CLOCK() - started) / 1e6
             if index >= warmup:
                 timings.append(elapsed)
     except SlmpUsageError as exc:

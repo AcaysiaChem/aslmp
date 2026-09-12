@@ -26,10 +26,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Literal, Protocol
 
+from aslmp._clock import DEFAULT_CLOCK
 from aslmp.commands.base import EncodeContext
 from aslmp.commands.batch import ReadWords, WriteBits, WriteWords
 from aslmp.commands.info import ReadTypeName, SelfTest
@@ -539,9 +539,9 @@ async def _run_case(
         )
     except Exception as exc:  # a case that cannot even be built is a case failure
         return CaseResult(case, "error", f"the request could not be built: {exc!r}")
-    started = time.monotonic_ns()
+    started = DEFAULT_CLOCK()
     raw = await exchange(request)
-    elapsed = time.monotonic_ns() - started
+    elapsed = DEFAULT_CLOCK() - started
     if raw is None:
         if isinstance(case.expect, NoResponse):
             return CaseResult(case, "pass", "no response, as expected", None, elapsed, request)

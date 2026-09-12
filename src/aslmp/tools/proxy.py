@@ -15,7 +15,7 @@ forwarding does not change.
 **Two stamps per frame.** A monotonic timestamp and the delta since the previous frame
 in the same direction. The request-to-response delta is the number the client sees; the
 response-to-next-request delta is the *host gap*, which is where a slow control loop
-hides. Both come from ``time.monotonic_ns`` and never from the wall clock: a run that
+hides. Both come from ``aslmp.timing.DEFAULT_CLOCK`` and never from the wall clock: a run that
 lasts a shift crosses an NTP step.
 
 **TCP only, and that is not laziness.** Proxying UDP to an iQ-F cannot work: a UDP SLMP
@@ -32,10 +32,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from aslmp._clock import DEFAULT_CLOCK
 from aslmp.tools import EXIT_OK
 from aslmp.tools._common import ENCODINGS, FRAMES, hexdump, parse_or_exit, usage, warn
 from aslmp.wire.codec import ASCII, BINARY, Codec, SlmpCodecError
@@ -230,7 +230,7 @@ async def _serve(
             writer.close()
             return
         up_reader, up_writer = upstream
-        started = time.monotonic_ns()
+        started = DEFAULT_CLOCK()
         tasks = (
             asyncio.create_task(
                 _pump(
@@ -293,7 +293,7 @@ async def _pump(  # pragma: no cover -- needs two live sockets
             return
         writer.write(chunk)
         await writer.drain()
-        at = time.monotonic_ns()
+        at = DEFAULT_CLOCK()
         for message in splitter.feed(chunk):
             delta = "" if previous is None else f" (+{(at - previous) / 1e6:.2f} ms)"
             previous = at

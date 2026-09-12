@@ -52,6 +52,7 @@ from dataclasses import field as _dataclass_field
 from types import TracebackType
 from typing import TYPE_CHECKING, ClassVar, Final, Literal, Self, TypeVar, final, overload
 
+from aslmp._clock import DEFAULT_CLOCK
 from aslmp.blocks.fields import (
     Bounds,
     NumberSpec,
@@ -126,7 +127,13 @@ from aslmp.results import (
     ResetOutcome,
     SplitReading,
 )
-from aslmp.timing import Clock, Nanos, Transaction, TransactionSink, TransactionTiming
+from aslmp.timing import (
+    Clock,
+    Nanos,
+    Transaction,
+    TransactionSink,
+    TransactionTiming,
+)
 from aslmp.transport.base import TransportKind
 from aslmp.transport.inflight import Concurrency
 from aslmp.transport.tcp import TcpTransport
@@ -658,7 +665,7 @@ class Plc:
         capability_overrides: Mapping[Capability, str] | None = None,
         plc_clock: PlcClockSource | None = None,
         capture_frames: bool = False,
-        clock: Clock = time.monotonic_ns,
+        clock: Clock = DEFAULT_CLOCK,
         on_transaction: TransactionSink | None = None,
         on_event: EventSink | None = None,
         name: str | None = None,

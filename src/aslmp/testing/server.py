@@ -29,10 +29,10 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, Literal
 
+from aslmp._clock import DEFAULT_CLOCK
 from aslmp.profile import Encoding
 from aslmp.testing.dispatch import Dispatcher, Reply, SessionState, Silence
 from aslmp.testing.pathology import Pathology
@@ -264,7 +264,7 @@ class PlcSimulator:
         self._events: list[ServerEvent] = []
         self._tasks: set[asyncio.Task[None]] = set()
         self._last_response: dict[int, bytes] = {}
-        self._clock = time.monotonic_ns
+        self._clock = DEFAULT_CLOCK
         self._started = False
 
     # -- lifecycle -----------------------------------------------------------------

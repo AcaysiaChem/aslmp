@@ -49,11 +49,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import threading
-import time
 from collections.abc import Coroutine, Mapping, Sequence
 from types import TracebackType
 from typing import Any, Final, Literal, Self, TypeVar, final, overload
 
+from aslmp._clock import DEFAULT_CLOCK
 from aslmp.blocks.plan import BlockPlan, SplitBlockPlan
 from aslmp.client import Handshake, MonitoringTimer, PlcClockSource
 from aslmp.client import Plc as AsyncPlc
@@ -265,7 +265,7 @@ class Plc:
         capability_overrides: Mapping[Capability, str] | None = None,
         plc_clock: PlcClockSource | None = None,
         capture_frames: bool = False,
-        clock: Clock = time.monotonic_ns,
+        clock: Clock = DEFAULT_CLOCK,
         on_transaction: TransactionSink | None = None,
         on_event: EventSink | None = None,
         name: str | None = None,

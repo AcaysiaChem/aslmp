@@ -23,10 +23,11 @@ Two properties of this module are load-bearing and both come from measurements o
    :class:`TransactionTiming` re-checks the derivation in ``__post_init__`` so a
    hand-built record cannot lie either.
 
-2. **Every stamp comes from an injected clock.** Nothing in this module calls
-   :func:`time.monotonic_ns`; ``time`` is not imported. The clock is a constructor
-   argument of :class:`TimingBuilder`, so every derived property is exact against a
-   fake clock in a test.
+2. **Every stamp comes from an injected clock.** Nothing in this module *calls* a clock.
+   :data:`DEFAULT_CLOCK` is named here so the whole package has one answer to "which
+   clock", but it is only ever a default argument: the clock is a constructor argument of
+   :class:`TimingBuilder`, so every derived property is exact against a fake clock in a
+   test.
 
 All stamps come from one *monotonic* clock. Never wall-clock: a loop that runs for
 months crosses an NTP step, a DST boundary and a leap smear.
@@ -61,7 +62,7 @@ Nanos = NewType("Nanos", int)
 
 
 class Clock(Protocol):
-    """A monotonic nanosecond clock. :func:`time.monotonic_ns` satisfies this.
+    """A monotonic nanosecond clock. :data:`aslmp._clock.DEFAULT_CLOCK` satisfies this.
 
     It is a parameter everywhere it is used. This module never reaches for a default:
     a stamp taken at a site a test cannot control is a number nobody can check.
