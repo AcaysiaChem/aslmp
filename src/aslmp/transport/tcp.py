@@ -476,6 +476,15 @@ class TcpTransport:
                 nbytes = await asyncio.wait_for(loop.sock_recv_into(sock, window), remaining)
             except TimeoutError as exc:
                 raise self._timeout(deadline, received) from exc
+            except ConnectionResetError as exc:
+                # An abortive close is the SAME EVENT as a clean one; which of the two a
+                # busy entry produces is a property of the host's TCP stack, not of the
+                # PLC. Windows delivers FIN and recv() returns 0; Linux delivers RST and
+                # recv() raises ECONNRESET. Routing both through _eof is what keeps
+                # SlmpConnectionEntryBusyError meaning the same thing on every platform.
+                # Measured 2026-09-24 in CI: identical simulator, identical client;
+                # windows-latest raised entry-busy and ubuntu-latest raised connection-lost.
+                raise self._eof(received) from exc
             except OSError as exc:
                 raise SlmpConnectionLostError(
                     f"the connection to {self._host}:{self._port} failed after "
@@ -504,14 +513,20 @@ class TcpTransport:
         )
 
     def _eof(self, received: int) -> SlmpConnectionEntryBusyError | SlmpConnectionLostError:
-        """A zero-byte read: EOF. Which one it is depends on whether this socket ever
-        worked.
+        """The peer ended the connection without answering. Which error that is depends
+        on whether this socket ever worked.
 
         On the **first** read of a generation the entry-busy reading is the one that
         matches the hardware: the CPU accepts a second connection to a one-entry
         configuration and then FINs. Once a transaction has completed on this socket the
-        entry was demonstrably ours, so the same EOF means the peer closed an
+        entry was demonstrably ours, so the same ending means the peer closed an
         established connection -- a stopped CPU, a reset, or a cable.
+
+        Two wire events arrive here and they are the same event. A clean close gives a
+        zero-byte ``recv``; an abortive one raises ``ECONNRESET``. Which a busy entry
+        produces is decided by the *host's* TCP stack rather than by the PLC, so both are
+        classified identically -- otherwise this library's most precisely-named error
+        would exist only on the platform it was developed on.
         """
         if self._transactions_completed == 0 and received == 0:
             return SlmpConnectionEntryBusyError(

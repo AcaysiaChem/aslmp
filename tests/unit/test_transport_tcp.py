@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import socket  # noqa: TID251 - transport tests need a real socket; that is the point
+import struct
 import time
 from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Self
+from unittest.mock import patch
 
 import pytest
 
@@ -67,6 +69,13 @@ class FakeServer:
     replies: list[Reply] = field(default_factory=list)
     default: Reply | None = None
     max_connections: int = 1
+    abortive_close: bool = False
+    """Refuse the over-limit connection with RST instead of FIN.
+
+    Which of the two a busy entry produces belongs to the HOST's TCP stack, not to
+    the PLC. CI measured windows-latest delivering FIN and ubuntu-latest delivering
+    ECONNRESET for the identical server and client, 2026-09-24.
+    """
     received: list[bytes] = field(default_factory=list)
     connections: int = 0
     port: int = 0
@@ -93,7 +102,12 @@ class FakeServer:
     ) -> None:
         self.connections += 1
         if self.connections > self.max_connections:
-            writer.close()  # accept, then FIN: exactly what the FX5U does
+            if self.abortive_close:
+                raw = writer.get_extra_info("socket")
+                raw.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+                )
+            writer.close()  # accept, then FIN (or RST): exactly what the FX5U does
             return
         try:
             while True:
@@ -614,3 +628,106 @@ def test_repr_says_where_it_points_and_whether_it_is_open() -> None:
     transport = TcpTransport("192.168.10.250", 5002)
     assert "192.168.10.250" in repr(transport)
     assert "closed" in repr(transport)
+
+
+PARTIAL_PREFIX = bytes([80, 0, 0, 255])
+"""Four bytes of a 3E response prefix: enough for "some of it arrived"."""
+
+
+async def test_a_busy_entry_is_entry_busy_whether_it_closes_cleanly_or_abortively() -> None:
+    """Same error on every platform, because the difference is the host's, not the PLC's.
+
+    A second connection to a one-entry SLMP configuration is accepted and then ended. The
+    CPU does one thing; the local TCP stack decides how the client sees it. Windows
+    delivers FIN, so ``recv`` returns 0. Linux delivers RST, so ``recv`` raises
+    ``ECONNRESET`` and the classifier never ran.
+
+    CI found this on the first nine-cell run, 2026-09-24: identical simulator, identical
+    client, ``SlmpConnectionEntryBusyError`` on windows-latest and
+    ``SlmpConnectionLostError`` on ubuntu-latest. This library's most precisely-named
+    error existed only on the platform it was developed on, and Linux is where most
+    industrial Python runs.
+
+    ``SO_LINGER 0`` asks for the abortive case and on Linux that is what arrives. On
+    Windows the local stack still reports a clean EOF, so **this test does not exercise
+    the RST path there** -- confirmed by mutation: deleting the ``ConnectionResetError``
+    branch leaves it green on Windows. Its companion below injects the error directly and
+    is the one that holds everywhere. Both are kept: this is the only end-to-end evidence,
+    and only Linux CI can supply it.
+    """
+    for abortive in (False, True):
+        async with FakeServer(max_connections=1, abortive_close=abortive) as server:
+            first = await connected(server)
+            try:
+                second = TcpTransport("127.0.0.1", server.port)
+                with pytest.raises(SlmpConnectionEntryBusyError) as caught:
+                    await second.open(a_deadline())
+                    await second.exchange(REQUEST, FixedLength(20), a_deadline(), a_timing())
+                await second.close()
+                assert "entry" in str(caught.value).lower(), (
+                    f"abortive_close={abortive} gave: {caught.value}"
+                )
+            finally:
+                await first.close()
+
+
+async def test_econnreset_with_nothing_read_is_classified_as_entry_busy() -> None:
+    """The platform-independent half, and the one that actually bites.
+
+    The end-to-end test above cannot produce ECONNRESET on Windows, so it stays green
+    there with the fix deleted. This injects the error the Linux stack raises, so the
+    classification is pinned wherever the suite runs.
+    """
+    async with FakeServer(max_connections=1, default=Reply(chunks=(b"x" * 20,))) as server:
+        transport = TcpTransport("127.0.0.1", server.port)
+        await transport.open(a_deadline())
+        try:
+            loop = asyncio.get_running_loop()
+
+            async def reset(*args: object, **kwargs: object) -> int:
+                raise ConnectionResetError(104, "Connection reset by peer")
+
+            with (
+                patch.object(loop, "sock_recv_into", reset),
+                pytest.raises(SlmpConnectionEntryBusyError) as caught,
+            ):
+                await transport.exchange(REQUEST, FixedLength(20), a_deadline(), a_timing())
+            assert "entry" in str(caught.value).lower()
+            assert isinstance(caught.value.__cause__, ConnectionResetError)
+        finally:
+            await transport.close()
+
+
+async def test_econnreset_after_a_partial_response_is_still_a_lost_connection() -> None:
+    """The other half of the rule, which widening the classifier must not have eaten.
+
+    Zero bytes read means the peer never accepted us: entry busy. Bytes read and then a
+    reset means a connection that was working has gone and the response is incomplete, so
+    it stays :class:`SlmpConnectionLostError` -- nothing here invents the rest of a
+    half-arrived frame. Asserted rather than claimed in a docstring, because swallowing
+    the narrow case is exactly how a widened classifier goes wrong.
+    """
+    async with FakeServer(max_connections=1, default=Reply(chunks=(b"x" * 20,))) as server:
+        transport = TcpTransport("127.0.0.1", server.port)
+        await transport.open(a_deadline())
+        try:
+            loop = asyncio.get_running_loop()
+            calls = 0
+
+            async def partial_then_reset(sock: object, buf: memoryview) -> int:
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    buf[:4] = PARTIAL_PREFIX
+                    return len(PARTIAL_PREFIX)
+                raise ConnectionResetError(104, "Connection reset by peer")
+
+            with (
+                patch.object(loop, "sock_recv_into", partial_then_reset),
+                pytest.raises(SlmpConnectionLostError) as caught,
+            ):
+                await transport.exchange(REQUEST, FixedLength(20), a_deadline(), a_timing())
+            assert "entry" not in str(caught.value).lower()
+            assert "4 byte(s)" in str(caught.value)
+        finally:
+            await transport.close()

@@ -779,20 +779,41 @@ async def test_a_failed_transaction_is_sticky_and_never_reconnects_itself() -> N
 
 async def test_a_segmented_response_is_stamped_after_its_last_chunk() -> None:
     """One 1931-byte read split at the 1460-byte MSS on 1 of 3 identical trials, 3.0 ms
-    apart. Stamping the first chunk reports 11.0 ms for a 14.0 ms transaction."""
+    apart. Stamping the first chunk reports 11.0 ms for a 14.0 ms transaction.
+
+    **What this asserts and what it cannot.** Whether a client sees one chunk or two is
+    decided by the local TCP stack, not by this library and not by the simulator that
+    writes them: CI 2026-09-24 had Python 3.11 on windows-latest reassembling a
+    deliberately split 1931-byte response before ``sock_recv_into`` returned, while 3.13
+    on the same runner saw two chunks. Demanding the split made this test assert an
+    operating-system behaviour, and it failed for a reason that had nothing to do with
+    the code under test.
+
+    So the contract is asserted unconditionally -- the receive stamp is the LAST chunk's,
+    whichever way it arrived -- and the multi-chunk specifics only when the split actually
+    happened. ``test_a_segmented_response_is_one_message`` in ``tests/unit/test_connection``
+    is the deterministic pin: it feeds the two chunks itself, so the stamping rule is held
+    on every platform regardless of what the stack does here.
+    """
     entries = (Entry(name="tcp", protocol="tcp"),)
-    board = FX5U_32MT_DS.pathology.replace(segment_at=1460, segment_gap_s=0.003)
+    board = FX5U_32MT_DS.pathology.replace(segment_at=1460, segment_gap_s=0.02)
     async with bench(entries=entries, pathology=board) as simulator, client_for(
         simulator
     ) as plc:
         reading = await plc.timed.read_words("D0", 960)
         assert len(reading.value) == 960
         timing = reading.tx.timing
-        assert timing.segmented
-        assert len(timing.chunks) > 1
+
+        # The contract, true either way.
         assert timing.received_at == timing.chunks[-1].at
-        assert timing.wire_ns > timing.first_byte_ns
-        assert plc.counters.segmented_responses >= 1
+        assert timing.wire_ns > 0
+        # Self-consistency: the flag and the chunk list must agree.
+        assert timing.segmented == any(chunk.partial for chunk in timing.chunks)
+
+        if timing.segmented:
+            assert len(timing.chunks) > 1
+            assert timing.wire_ns > timing.first_byte_ns
+            assert plc.counters.segmented_responses >= 1
 
 
 async def test_an_injected_latency_lands_in_wire_ns_and_nowhere_else() -> None:
