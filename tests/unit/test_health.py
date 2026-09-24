@@ -364,33 +364,75 @@ async def test_a_skipped_probe_still_counts_as_an_attempt_so_run_cannot_spin() -
             await plc.aclose()
 
 
+async def _await_probes(plc: Plc, count: int, *, timeout: float = 10.0) -> None:
+    """Wait for ``count`` probes to have been sent, bounded, and say why if they are not.
+
+    The bound is the entire point, and the early return on an unusable connection is the
+    reason the bound alone is not enough to be informative.
+
+    ``probes_sent`` is incremented by :meth:`HealthMonitor.probe_once` only while the
+    connection is usable. ``FAILED`` is sticky and is never left implicitly, so ONE failed
+    probe freezes this counter for good: every later probe returns ``SKIPPED_UNUSABLE``
+    without incrementing it, while :meth:`HealthMonitor.run` keeps looping happily,
+    because its loop condition is ``CLOSED`` and a ``FAILED`` client is not ``CLOSED``.
+
+    An unbounded ``while plc.counters.probes_sent < 2`` therefore does not fail when a
+    probe fails -- it spins at 5 ms forever. That is what hung four cells of the CI matrix
+    inside pytest on 2026-09-24 (macos/3.12, macos/3.13, ubuntu/3.12, windows/3.12 were
+    still in the pytest step at 842 s, against a 109 s honest run on windows/3.13), and
+    with no per-test timeout anywhere the logs could not say which test or where.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while plc.counters.probes_sent < count:
+        if not plc.state.usable:
+            raise AssertionError(
+                f"the connection went {plc.state.value} after "
+                f"{plc.counters.probes_sent} of {count} probes. FAILED is sticky, so the "
+                f"count can never reach {count} now -- most likely a probe exceeded the "
+                f"client timeout on a loaded runner."
+            )
+        if loop.time() > deadline:
+            raise AssertionError(
+                f"only {plc.counters.probes_sent} of {count} probes were sent in "
+                f"{timeout:g} s, with the connection still {plc.state.value}."
+            )
+        await asyncio.sleep(0.005)
+
+
 async def test_run_stops_when_the_client_is_closed() -> None:
     """``run()`` returns once the client reaches CLOSED -- bounded by the probe in flight.
 
-    The two numbers here have to be ordered deliberately, and the original pair were
-    equal, which made this a coin flip. Closing a socket does **not** reliably wake a task
-    already awaiting a read on it: on some loops and platforms the pending
-    ``sock_recv_into`` only unblocks when its own deadline expires. So if ``aclose()``
-    lands while a probe is mid-flight, the monitor cannot return until that probe gives
-    up, and the bound on this test is the CLIENT's timeout, not the close.
+    Closing a socket does **not** reliably wake a task already awaiting a read on it: on
+    some loops and platforms the pending ``sock_recv_into`` only unblocks when its own
+    deadline expires. So if ``aclose()`` lands while a probe is mid-flight, the monitor
+    cannot return until that probe gives up, and the bound on this test is the CLIENT's
+    timeout and not the close. The two numbers therefore have to be ordered deliberately:
+    originally both were 2.0 s, so the probe's deadline and the test's patience expired
+    together and whichever won was down to scheduling -- green on windows-latest 3.13, red
+    on ubuntu-latest and on 3.11, CI 2026-09-24.
 
-    With both set to 2.0 s the probe's deadline and the test's patience expired together
-    and whichever won was down to scheduling -- green on windows-latest 3.13, red on
-    ubuntu-latest and on 3.11, CI 2026-09-24. A short client timeout makes the ordering
-    explicit and the test fast, instead of hiding the dependency behind a longer wait.
+    The ordering is now 2 s against 30 s rather than a short client timeout against a long
+    wait. Shortening the client's timeout orders the two just as well but buys it in the
+    wrong currency: a 0.25 s deadline on a loopback round trip is easy for a loaded CI
+    runner to miss, and a missed probe here does not fail the test, it makes the
+    connection ``FAILED`` for good. See :func:`_await_probes`.
     """
     async with PlcSimulator() as simulator:
         host, port = simulator.address("tcp")
-        plc = Plc(host, port, profile=FX5U, timeout=0.25, name="tcp")
+        plc = Plc(host, port, profile=FX5U, timeout=2.0, name="tcp")
         await plc.connect()
         monitor = HealthMonitor(plc, idle_probe_after=0.01, probe_interval=0.01)
         task = asyncio.create_task(monitor.run())
-        while plc.counters.probes_sent < 2:
-            await asyncio.sleep(0.005)
-        await plc.aclose()
-        assert plc.state is ConnectionState.CLOSED
-        # Comfortably longer than the 0.25 s a probe can still be waiting out.
-        await asyncio.wait_for(task, timeout=5.0)
+        try:
+            await _await_probes(plc, 2)
+            await plc.aclose()
+            assert plc.state is ConnectionState.CLOSED
+            # Comfortably past the 2 s a probe caught mid-flight can still be waiting out.
+            await asyncio.wait_for(task, timeout=30.0)
+        finally:
+            # An assertion above must not leak a live monitor into the rest of the suite.
+            task.cancel()
         assert task.done()
         assert monitor.snapshot().probes_sent >= 2
 
