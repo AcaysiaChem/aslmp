@@ -275,6 +275,11 @@ def test_python_dash_m_aslmp_help_is_the_same_and_costs_the_same() -> None:
     """
     report = probe(
         "import runpy, sys, io, contextlib\n"
+        # Everything the HARNESS dragged in, recorded before aslmp is touched. `import
+        # runpy` alone pulls `threading` on CPython 3.11 and not on 3.12 or 3.13
+        # (measured 2026-09-24 on 3.11.15, 3.12.13, 3.13.14), so without this the test
+        # reports its own probe as a leak and fails on 3.11 whatever aslmp does.
+        "baseline = set(sys.modules)\n"
         "sys.argv = ['aslmp', '--help']\n"
         "out = io.StringIO()\n"
         "try:\n"
@@ -284,7 +289,8 @@ def test_python_dash_m_aslmp_help_is_the_same_and_costs_the_same() -> None:
         "    code = exc.code\n"
         "else:\n"
         "    code = 0\n"
-        f"leaked = ','.join(n for n in {FORBIDDEN_MODULES!r} if n in sys.modules)\n"
+        f"leaked = ','.join(n for n in {FORBIDDEN_MODULES!r} if n in sys.modules "
+        "and n not in baseline)\n"
         "print(repr((code, leaked, 'capabilities' in out.getvalue())))\n"
     )
     code, leaked, listed_a_subcommand = ast.literal_eval(report)

@@ -38,7 +38,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import NewType, Protocol, TypeAlias, final
+from typing import Final, NewType, Protocol, TypeAlias, final
 
 __all__ = [
     "Chunk",
@@ -121,6 +121,26 @@ class Phase(enum.Enum):
     ROUND_TRIP = "round_trip"
     TRANSFER = "transfer"
     DECODE = "decode"
+
+
+#: The members again, as plain module globals, because reading one off the class costs an
+#: allocation on CPython 3.11: ``EnumMeta`` resolves member access through a descriptor
+#: there, which 3.12 replaced with a plain class-dictionary lookup.
+#:
+#: Measured 2026-09-24 with tracemalloc, 3.11.15 against 3.13.14, 5 000 reads each::
+#:
+#:     Phase.ROUND_TRIP     3.11: +48 B      3.13: +0 B
+#:     module-level alias   3.11:  +0 B      3.13: +0 B
+#:
+#: :meth:`Transaction.dominant_phase` runs once per transaction inside
+#: :class:`~aslmp.observability.LatencyRecorder`, which promises to allocate nothing after
+#: construction, and this package supports 3.11. A global load keeps that promise true on
+#: every interpreter it claims rather than only on the one it was developed on.
+_QUEUE: Final = Phase.QUEUE
+_ENCODE: Final = Phase.ENCODE
+_ROUND_TRIP: Final = Phase.ROUND_TRIP
+_TRANSFER: Final = Phase.TRANSFER
+_DECODE: Final = Phase.DECODE
 
 
 @final
@@ -542,21 +562,22 @@ class Transaction:
         """
         t = self.timing
         # Written without a container on purpose: LatencyRecorder calls this per
-        # transaction and must allocate nothing after construction.
-        best_phase = Phase.QUEUE
+        # transaction and must allocate nothing after construction. The module-level
+        # aliases are part of that and not a shorthand -- see their definition.
+        best_phase = _QUEUE
         best = t.queue_ns
         value = t.encode_ns
         if value > best:
-            best_phase, best = Phase.ENCODE, value
+            best_phase, best = _ENCODE, value
         value = t.first_byte_ns
         if value > best:
-            best_phase, best = Phase.ROUND_TRIP, value
+            best_phase, best = _ROUND_TRIP, value
         value = t.transfer_ns
         if value > best:
-            best_phase, best = Phase.TRANSFER, value
+            best_phase, best = _TRANSFER, value
         value = t.decode_ns
         if value > best:
-            best_phase, best = Phase.DECODE, value
+            best_phase, best = _DECODE, value
         return best_phase
 
     def phase_ns(self, phase: Phase) -> int:

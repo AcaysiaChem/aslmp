@@ -253,6 +253,10 @@ class ConformanceReport:
 # ----------------------------------------------------------------------------------------
 
 
+_CLOSE_TIMEOUT: Final = 2.0
+"""How long a close waits on the peer before giving up. Never unbounded."""
+
+
 class Exchange(Protocol):
     """Send one request frame, return one response frame, or ``None`` for silence.
 
@@ -345,8 +349,11 @@ class TcpExchange(_StreamExchange):
         self._reader = None
         if writer is not None:
             writer.close()
-            with contextlib.suppress(ConnectionError, OSError):
-                await writer.wait_closed()
+            # Bounded for the same reason every other wait_closed() here is: it waits on
+            # the peer, and a peer that never finishes closing would hang the caller with
+            # no test named and no stack. See PlcSimulator._finish_closing.
+            with contextlib.suppress(ConnectionError, OSError, TimeoutError):
+                await asyncio.wait_for(writer.wait_closed(), _CLOSE_TIMEOUT)
 
 
 class UdpExchange(_StreamExchange):

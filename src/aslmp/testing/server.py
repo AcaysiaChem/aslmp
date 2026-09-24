@@ -28,6 +28,7 @@ them, a failing test can print exactly what the CPU saw and exactly what it deci
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, Literal
@@ -343,13 +344,17 @@ class PlcSimulator:
         caller's test suite. A test double that cannot be torn down is worse than one that
         tears down loudly.
         """
-        abort = getattr(bound.server, "abort_clients", None)
-        if abort is not None:  # CPython 3.13+
-            abort()
         assert bound.server is not None  # narrowed by the caller
         try:
             await asyncio.wait_for(bound.server.wait_closed(), _CLOSE_TIMEOUT)
         except TimeoutError:
+            # Force the stragglers, but only now: aborting before the ordinary wait kills
+            # handlers that have not yet read bytes already sitting in their buffers.
+            abort = getattr(bound.server, "abort_clients", None)  # CPython 3.13+
+            if abort is not None:
+                abort()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(bound.server.wait_closed(), _CLOSE_TIMEOUT)
             self._event(
                 bound.entry,
                 "close_timed_out",

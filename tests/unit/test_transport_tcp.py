@@ -10,6 +10,7 @@ deterministically, which is the only way they get a regression test at all.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import socket  # noqa: TID251 - transport tests need a real socket; that is the point
 import struct
 import time
@@ -95,7 +96,22 @@ class FakeServer:
         server = self._server
         if server is not None:
             server.close()
-            await server.wait_closed()
+            # Bounded, and force-closed where the interpreter allows. asyncio attaches an
+            # accepted connection to the server before it announces it to the handler, so
+            # there is a window holding a connection nothing can close -- and from CPython
+            # 3.12.1 wait_closed() waits for exactly that. abort_clients() exists from
+            # 3.13 for this; below it, giving up beats hanging the suite.
+            try:
+                await asyncio.wait_for(server.wait_closed(), 5.0)
+            except TimeoutError:
+                # Only now. Aborting up front kills a handler that has not yet read the
+                # bytes already sitting in its buffer, which silently empties
+                # `received` -- measured on 3.13, 2026-09-24.
+                abort = getattr(server, "abort_clients", None)  # CPython 3.13+
+                if abort is not None:
+                    abort()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(server.wait_closed(), 5.0)
 
     async def _handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -130,6 +146,15 @@ class FakeServer:
                     return
         except (ConnectionError, asyncio.CancelledError):  # pragma: no cover - teardown
             return
+        finally:
+            # Detach the transport from the server. asyncio does NOT close it when the
+            # handler returns, and from CPython 3.12.1 Server.wait_closed() waits for
+            # every accepted connection to detach -- so a handler that returns without
+            # closing its writer hangs the teardown forever. Before 3.12.1 wait_closed()
+            # returned immediately and this was invisible, which is why CI hung on every
+            # 3.12 cell and on no 3.11 cell (2026-09-24). Verified by experiment: adding
+            # this one call makes test_one_transaction_reads_one_response pass on 3.12.
+            writer.close()
 
 
 class FixedLength:
@@ -379,7 +404,17 @@ async def test_an_exchange_that_reads_no_response_closes_the_socket() -> None:
     which is exactly what happened, because this branch used to return early without
     reading *or* closing.
     """
-    async with FakeServer(default=Reply(chunks=(bytes(20),))) as server:
+    # The delay is load-bearing, and not for timing. Without it the server's 20 bytes
+    # are already sitting unread in the client's receive buffer when this branch closes
+    # the socket, and closing a socket with unread data queued makes the OS send RST
+    # rather than FIN -- which discards the peer's buffers too, so the request this test
+    # then asserts on can vanish from `server.received`. Measured on CI 2026-09-24:
+    # failed on macos/3.11, macos/3.13, ubuntu/3.11 and windows/3.11, passed on
+    # ubuntu/3.13 and windows/3.13, which is the signature of a race and not of a rule.
+    # Holding the reply means nothing is unread at close, so the close is a clean FIN and
+    # the server keeps what it already read. It is also the more faithful scenario: the
+    # answer is genuinely still in flight, which is the case the docstring describes.
+    async with FakeServer(default=Reply(chunks=(bytes(20),), delay=2.0)) as server:
         transport = await connected(server)
         try:
             result = await transport.exchange(
