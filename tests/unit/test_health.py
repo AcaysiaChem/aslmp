@@ -18,6 +18,7 @@ import asyncio
 
 import pytest
 
+from aslmp import ConnectionState
 from aslmp.client import Plc
 from aslmp.commands.info import DEFAULT_LOOPBACK
 from aslmp.errors import SlmpConfigurationError, SlmpSinkError
@@ -364,15 +365,32 @@ async def test_a_skipped_probe_still_counts_as_an_attempt_so_run_cannot_spin() -
 
 
 async def test_run_stops_when_the_client_is_closed() -> None:
+    """``run()`` returns once the client reaches CLOSED -- bounded by the probe in flight.
+
+    The two numbers here have to be ordered deliberately, and the original pair were
+    equal, which made this a coin flip. Closing a socket does **not** reliably wake a task
+    already awaiting a read on it: on some loops and platforms the pending
+    ``sock_recv_into`` only unblocks when its own deadline expires. So if ``aclose()``
+    lands while a probe is mid-flight, the monitor cannot return until that probe gives
+    up, and the bound on this test is the CLIENT's timeout, not the close.
+
+    With both set to 2.0 s the probe's deadline and the test's patience expired together
+    and whichever won was down to scheduling -- green on windows-latest 3.13, red on
+    ubuntu-latest and on 3.11, CI 2026-09-24. A short client timeout makes the ordering
+    explicit and the test fast, instead of hiding the dependency behind a longer wait.
+    """
     async with PlcSimulator() as simulator:
-        plc = client_for(simulator)
+        host, port = simulator.address("tcp")
+        plc = Plc(host, port, profile=FX5U, timeout=0.25, name="tcp")
         await plc.connect()
         monitor = HealthMonitor(plc, idle_probe_after=0.01, probe_interval=0.01)
         task = asyncio.create_task(monitor.run())
         while plc.counters.probes_sent < 2:
             await asyncio.sleep(0.005)
         await plc.aclose()
-        await asyncio.wait_for(task, timeout=2.0)
+        assert plc.state is ConnectionState.CLOSED
+        # Comfortably longer than the 0.25 s a probe can still be waiting out.
+        await asyncio.wait_for(task, timeout=5.0)
         assert task.done()
         assert monitor.snapshot().probes_sent >= 2
 
