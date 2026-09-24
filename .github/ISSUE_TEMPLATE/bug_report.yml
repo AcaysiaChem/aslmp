@@ -1,0 +1,192 @@
+name: Bug report
+description: Something in aslmp behaves differently from what it says it does.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before anything else.** If your CPU is attached to something that can move,
+        do not reproduce a bug on it. This library writes to PLCs.
+
+        Two reports that belong somewhere else:
+
+        - *"My CPU answers differently from your table."* That is not a bug, it is the
+          most valuable report this project receives — use the **CPU behaviour
+          disagreement** template instead.
+        - A security vulnerability in `aslmp` itself: see `SECURITY.md`, not here.
+
+        Everything below the first two boxes is asking for the conditions of your
+        observation. That is not bureaucracy: this project has twice had to withdraw a
+        published claim because a measurement was recorded without them, and a report
+        about a PLC with no firmware version behind it cannot be acted on.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected instead
+      description: >
+        If an exception was raised, paste the whole diagnostic block — the target,
+        request, sent, received, routes, timing, observed, action and manual lines are
+        each load-bearing. Redact the address or the device values first if they matter
+        to you; say where you redacted.
+      placeholder: |
+        aslmp.SlmpUnsupportedCommandError: end code 0xC059 — "..."
+          target    ...
+          request   ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: The smallest code that shows it
+      description: >
+        Against the simulator (`aslmp serve`, or `aslmp.testing`) if you can reproduce
+        it there — a simulator repro is one we can fix without your PLC. Say so if it
+        only reproduces against real silicon.
+      render: python
+    validations:
+      required: true
+
+  - type: input
+    id: aslmp-version
+    attributes:
+      label: aslmp version
+      description: "`aslmp --version`, or the commit SHA if you are on a checkout."
+      placeholder: 0.1.0.dev0
+    validations:
+      required: true
+
+  - type: input
+    id: python-and-os
+    attributes:
+      label: Python version and OS
+      description: >
+        `python -VV` and the OS. Both matter here more than usual: clock resolution and
+        socket behaviour differ across them, and one shipped bug in this library existed
+        only on Windows below CPython 3.13.
+      placeholder: "3.11.15, Windows 11"
+    validations:
+      required: true
+
+  - type: input
+    id: cpu-model
+    attributes:
+      label: CPU model
+      description: The exact model as printed on the unit, not the family.
+      placeholder: FX5U-32MT/DS
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: CPU firmware version
+      description: >
+        GX Works3 → Diagnostics → Module Diagnostics, the firmware version field. A
+        measurement names one piece of silicon on one firmware; a report without this is
+        not actionable, and "unknown" is a worse answer than a delayed one.
+      placeholder: "1.065"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Profile key
+      description: The string passed to `Plc(profile=...)`. `aslmp identify HOST` prints it.
+      options:
+        - "melsec:iq-f/fx5u"
+        - "melsec:iq-f/fx5uc"
+        - "melsec:iq-f/fx5uj"
+        - "melsec:iq-f/fx5s"
+        - "melsec:iq-r"
+        - "melsec:iq-r/r00"
+        - "melsec:q"
+        - "melsec:l"
+        - "no PLC involved (simulator, unit test, CLI)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      options:
+        - TCP
+        - UDP
+        - not applicable
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frame
+    attributes:
+      label: Frame type
+      options:
+        - 3E
+        - 4E
+        - not applicable
+    validations:
+      required: true
+
+  - type: dropdown
+    id: data-code
+    attributes:
+      label: Communication Data Code
+      description: >
+        On iQ-F this is an **Own Node Setting for the whole Ethernet port**, not a
+        per-entry one. If you are not sure, that is itself worth saying — a coding
+        mismatch produces no response at all rather than an error.
+      options:
+        - Binary
+        - ASCII
+        - not sure
+        - not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: connection-entry
+    attributes:
+      label: The connection entry, as GX Works3 has it
+      description: >
+        Port number, and anything unusual: a UDP entry's destination IP, how many entries
+        the CPU has configured, whether anything else was connected at the time. One TCP
+        connection is served per entry, so "something else was on it" explains a whole
+        class of report.
+      placeholder: |
+        TCP, PLC-side port 5002, one of six entries. Nothing else connected.
+    validations:
+      required: true
+
+  - type: input
+    id: host-and-link
+    attributes:
+      label: Host and link
+      description: >
+        Required if your report quotes a latency figure, and useful otherwise. Where the
+        client ran, what is between it and the CPU, and the median RTT if you know it.
+        This project published a transport conclusion that turned out to be a property of
+        its Wi-Fi link; every timing table in this repository now names these.
+      placeholder: "laptop at 192.168.10.41, Wi-Fi, ~7 ms median RTT"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before you post
+      options:
+        - label: >
+            This is not a security vulnerability report. Those follow `SECURITY.md` —
+            private reporting first, never a public issue.
+          required: true
+        - label: >
+            If I quoted a latency number, I named the host and the link it came from.
+          required: false
+        - label: >
+            I have read `docs/unverified.md` and this is not a path that already ships
+            labelled unverified.
+          required: false

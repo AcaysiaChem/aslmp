@@ -1,0 +1,32 @@
+# Blank issues are off because both templates exist to collect the conditions of an
+# observation, and a report without them cannot be acted on. Anything that is not a bug
+# and not a CPU disagreement is a question, and questions are better in Discussions,
+# where the answer stays findable.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Question, or "how do I ...?"
+    url: https://github.com/AcaysiaChem/aslmp/discussions
+    about: >
+      Setup, GX Works3 parameters, which profile to pass, why a read came back silent.
+      Ask here — a question is not a defect, and the README's PLC-side section grew out
+      of exactly these.
+
+  - name: Security vulnerability in aslmp
+    url: https://github.com/AcaysiaChem/aslmp/security/policy
+    about: >
+      Do not open a public issue. The reporting address and what we can and cannot fix
+      are in SECURITY.md.
+
+  - name: "SLMP has no authentication and no encryption"
+    url: https://github.com/AcaysiaChem/aslmp/blob/main/SECURITY.md
+    about: >
+      That is a property of the protocol, not a defect in this library, and it is not
+      something we can fix. Read SECURITY.md before reporting it.
+
+  - name: Is this path verified?
+    url: https://github.com/AcaysiaChem/aslmp/blob/main/docs/unverified.md
+    about: >
+      Seven of the eight shipped profiles have never been connected to, and the ASCII
+      path has never been on a wire. If what surprised you is on that page, an issue
+      saying so is still welcome — but the page may already answer it.

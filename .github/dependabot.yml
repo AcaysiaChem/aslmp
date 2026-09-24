@@ -1,0 +1,25 @@
+# GitHub Actions only, and that is not an oversight.
+#
+# `aslmp` has zero runtime dependencies -- deliberately and load-bearing: the wheel has
+# to install on a Jetson's aarch64 and on a locked-down plant PC with no compiler and no
+# proxy to PyPI's transitive graph. So there is no `pip` ecosystem entry here, because
+# there is nothing in it to watch. The `dev` extra (pytest, hypothesis, mypy, ruff) is
+# declared as unpinned floors rather than pins, so a bump would have nothing to change;
+# CI installs whatever is current on each run, which is the honest way to find out that a
+# new mypy disagrees with us.
+#
+# The actions in `.github/workflows/` are pinned by major version, which is the one place
+# this repository does carry a supply chain -- a workflow action runs with a checkout of
+# our source and, in publish.yml, beside an OIDC token.
+
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies

@@ -1,0 +1,91 @@
+# The three checks this project ships under, on every interpreter and every OS it claims.
+#
+# Why the matrix is nine jobs and not one
+# ---------------------------------------
+# This project shipped a real bug that exactly one cell of this matrix would have caught.
+# `time.monotonic()` is backed by `GetTickCount64()` on Windows before CPython 3.13 and
+# steps at 15.625 ms, so on the oldest interpreter this package claims, on Windows, every
+# stamp it took landed on a ~16 ms grid: a 6 ms round trip was recorded as 0.0 or 16.0.
+# Measured 2026-09-12 on Python 3.11.15, Windows 11, against `perf_counter_ns` on the same
+# machine and the same sleep. It was invisible during development, which happens on 3.13,
+# where `monotonic` is `QueryPerformanceCounter` and resolves to 100 ns; it surfaced only
+# when the library was driven from a 3.11 environment. The fix is `src/aslmp/_clock.py`.
+#
+# "Latency as data" is this library's whole argument, so a quantised latency figure is
+# worse than an absent one. A single-version, single-OS CI would not have found that and
+# will not find the next one. The matrix is here for that reason and not for tidiness.
+#
+# Note that `mypy` pins `python_version = "3.11"` in `pyproject.toml`, so the interpreter
+# axis does not change what it type-checks -- the OS axis does, wherever behaviour is
+# platform-conditional, and that is the half of this matrix that earns its keep for mypy.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Never fail fast. The point of the matrix is to see WHICH cells disagree; a
+      # cancelled run hides exactly the pattern that identifies a clock or a path bug.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+
+    defaults:
+      run:
+        # bash on all three runners, so the quoting in these steps is written once.
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      # Hardware tests are excluded on purpose, and this step says so rather than
+      # leaving it to the marker. tests/hardware/ is gated on ASLMP_TEST_HOST and drives
+      # a real FX5U: it writes to scratch registers, and tests/hardware/
+      # test_remote_control.py issues Remote STOP, which halts a CPU. A CI runner must
+      # never be able to reach a PLC, so the variable is not set here and must not be
+      # added as a repository or environment secret.
+      - name: Assert the hardware gate is not set
+        run: |
+          if [ -n "${ASLMP_TEST_HOST:-}" ]; then
+            echo "ASLMP_TEST_HOST is set in CI. Hardware tests write to a real PLC and"
+            echo "can halt a CPU. Remove it from the repository/environment settings."
+            exit 1
+          fi
+
+      - name: ruff
+        run: python -m ruff check src tests tools bench
+
+      - name: mypy --strict
+        run: python -m mypy
+
+      # `-m "not hardware"` is belt and braces beside the ASLMP_TEST_HOST gate: the
+      # marker is the declared contract, the missing variable is what actually makes the
+      # tests skip, and neither one alone is worth relying on for something that can stop
+      # a machine.
+      - name: pytest
+        run: python -m pytest tests -q -m "not hardware"

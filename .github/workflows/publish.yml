@@ -1,0 +1,94 @@
+# Build a release and publish it to PyPI with trusted publishing (OIDC).
+#
+# There is no API token anywhere in this file and there must never be one. Trusted
+# publishing mints a short-lived, workflow-scoped credential at run time; a long-lived
+# token in a repository secret is a credential that can publish `aslmp` from anywhere,
+# forever, and this package installs on machines that talk to PLCs.
+#
+# WHAT THE OWNER STILL HAS TO DO -- none of it can be done from this repository
+# ----------------------------------------------------------------------------
+# 1. On PyPI, add a *pending* trusted publisher before the first release
+#    (https://pypi.org/manage/account/publishing/), because the project name is not
+#    registered yet -- README.md says so in its Install section. The four fields are:
+#        PyPI project name:  aslmp
+#        Owner:              AcaysiaChem
+#        Repository name:    aslmp
+#        Workflow name:      publish.yml
+#        Environment name:   pypi
+#    All five must match exactly, including the environment, or the publish step is
+#    rejected with an OIDC error rather than a permissions one.
+# 2. Create a GitHub environment named `pypi` (Settings -> Environments) and, if you
+#    want a human in the loop, add yourself as a required reviewer there. That is the
+#    only gate between "someone pushed a release" and "a new aslmp is on PyPI".
+# 3. Publish a GitHub release whose tag is the version, e.g. `v0.1.0`. This workflow
+#    refuses to publish if that tag disagrees with `src/aslmp/_version.py`.
+#
+# Two jobs on purpose: `build` needs no privileges at all, and `publish` holds the OIDC
+# token and runs nothing but the upload. Nothing that touches the internet or the
+# project's own code executes in the job that can sign.
+
+name: Publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist and wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the tag against src/aslmp/_version.py
+        run: |
+          set -euo pipefail
+          version=$(python -c "import runpy; print(runpy.run_path('src/aslmp/_version.py')['__version__'])")
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=$tag  _version.py=$version"
+          if [ "$tag" != "$version" ]; then
+            echo "Release tag $GITHUB_REF_NAME does not match __version__ $version."
+            echo "The version literal exists once, in src/aslmp/_version.py. Fix one of them."
+            exit 1
+          fi
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check --strict dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # The environment is half of the trusted-publisher match configured on PyPI, and it
+    # is where a required reviewer goes if you want one.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/aslmp
+    permissions:
+      # The OIDC token. This is the only privilege this job has, and the only job that
+      # has it.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      # `release/v1` is PyPA's own major-version ref for this action.
+      - uses: pypa/gh-action-pypi-publish@release/v1

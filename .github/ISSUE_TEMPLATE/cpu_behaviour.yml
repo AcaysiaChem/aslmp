@@ -1,0 +1,159 @@
+name: CPU behaviour disagreement
+description: Your CPU answers differently from a shipped table, or you can close an unverified row.
+title: "[cpu] "
+labels: ["hardware", "provenance"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This is the report this project most wants.** One CPU is the whole of our
+        evidence: a MELSEC iQ-F FX5U-32MT/DS on firmware 1.065. Seven of the eight
+        shipped profiles have never been connected to, the ASCII path has never been on a
+        wire, and `docs/unverified.md` lists every one of them with the experiment that
+        would settle it. An iQ-R, a Q, an L, an FX5UC/FX5UJ/FX5S or an ASCII-coded port
+        turns a row of that page from "the manual says" into "we measured".
+
+        The data files are built to receive this: every row of every table in
+        `src/aslmp/data/` carries a provenance tail — cpu, firmware, measured, host,
+        medium, samples — and a row cannot be marked measured without them. The fields
+        below **are** those columns. Filling them in is most of the work of the change.
+
+        Safety first, as ever: do not probe a CPU that is attached to anything that can
+        move, and note that `aslmp verify-ranges` reads devices the profile would
+        normally refuse (it writes nothing and changes no CPU state).
+
+  - type: textarea
+    id: disagreement
+    attributes:
+      label: What we say, and what your CPU said
+      description: >
+        Name the table or the claim — a device range, a point limit, an end code, a model
+        code, a capability, a line in `docs/unverified.md` or `docs/hardware.md` — and put
+        the CPU's actual answer beside it. End codes and raw bytes are better than prose.
+      placeholder: |
+        ranges_iqr.tsv says melsec:iq-r R has 0 points. On this R04CPU, R32767 reads
+        0x0000 and R32768 returns 0xC056, so the real boundary is 32768 points.
+    validations:
+      required: true
+
+  - type: input
+    id: cpu
+    attributes:
+      label: CPU model
+      description: The exact model, as printed on the unit. `Measurement.cpu`.
+      placeholder: R04CPU
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: >
+        `Measurement.firmware`. GX Works3 → Diagnostics → Module Diagnostics. A firmware
+        update can invalidate any row in this repository, which is why no row exists
+        without this.
+      placeholder: "1.065"
+    validations:
+      required: true
+
+  - type: input
+    id: date
+    attributes:
+      label: Date measured
+      description: "`Measurement.date`. ISO `YYYY-MM-DD`; the type refuses anything else."
+      placeholder: "2026-09-07"
+    validations:
+      required: true
+
+  - type: input
+    id: host
+    attributes:
+      label: Host
+      description: >
+        `Measurement.host` — where the client ran, precisely enough to go back to it: an
+        address, a name, or both.
+      placeholder: "192.168.10.36 (argus-bench)"
+    validations:
+      required: true
+
+  - type: input
+    id: medium
+    attributes:
+      label: Link
+      description: >
+        `Measurement.medium` — what ran between that host and the CPU, with the median RTT
+        if you know it. Leaving this out is the specific omission that cost this project a
+        published claim: a transport conclusion that was a property of one Wi-Fi link.
+      placeholder: "wired, 3.64 ms median RTT"
+    validations:
+      required: true
+
+  - type: input
+    id: samples
+    attributes:
+      label: n
+      description: >
+        `Measurement.samples` — how many observations the answer rests on. `1` is a fine
+        answer for "this end code came back"; a percentile without its n cannot be given an
+        error bar by a reader. Leave blank when a count is not what the claim rests on.
+      placeholder: "300"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: what-it-touches
+    attributes:
+      label: What this would change
+      description: Best guess is fine; we will work it out in the thread.
+      multiple: true
+      options:
+        - "a device range (ranges_iqf.tsv / ranges_iqr.tsv)"
+        - "a point limit (limits.tsv)"
+        - "an end code (end_codes.tsv)"
+        - "a model code (model_codes.tsv)"
+        - "a profile capability"
+        - "an open ambiguity (ambiguities.tsv, an A-... key)"
+        - "a row of docs/unverified.md"
+        - "a figure in docs/hardware.md"
+        - "not sure"
+    validations:
+      required: true
+
+  - type: input
+    id: ambiguity-key
+    attributes:
+      label: Ambiguity key, if this closes one
+      description: >
+        `aslmp ambiguities` prints the table, each row with the experiment that would
+        settle it. If you ran one of those probes, name its key.
+      placeholder: "A-ZR-RADIX"
+    validations:
+      required: false
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: The evidence, as your tools printed it
+      description: >
+        Whatever you have: `aslmp identify`, `aslmp capabilities <key>`,
+        `aslmp verify-ranges HOST --profile KEY --python` (which emits a paste-ready
+        `with_ranges()` call), `aslmp.testing.run_conformance`, `aslmp proxy` frames, or
+        raw hex. Unedited output is worth more than a summary of it.
+      render: text
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before you post
+      options:
+        - label: >
+            Nothing was written to a machine that can move something, and I did not issue
+            remote RUN/STOP/PAUSE/RESET/Latch Clear on a CPU I could not see.
+          required: true
+        - label: >
+            The CPU model and firmware above are the ones this observation came from, not
+            the family or a sibling unit.
+          required: true
