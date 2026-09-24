@@ -38,6 +38,18 @@ jobs:
   checks:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
+
+    # A healthy cell finishes in about two minutes. This bound is here because four
+    # cells of this matrix once sat INSIDE the pytest step for fourteen minutes and were
+    # still going when an unrelated push happened to cancel the run (2026-09-24, commit
+    # d78ef84: macos/3.12, macos/3.13, ubuntu/3.12 and windows/3.12 hung while
+    # windows/3.13 passed the same step in 109 s). Nothing stopped them but that
+    # accident. GitHub's default job timeout is 360 minutes, so each of those cells was
+    # entitled to six hours, and a macOS minute bills at ten times a Linux one.
+    #
+    # Fifteen minutes is roughly seven times the honest run and still bounds a hung
+    # macOS cell to about a dollar instead of twenty-two.
+    timeout-minutes: 15
     strategy:
       # Never fail fast. The point of the matrix is to see WHICH cells disagree; a
       # cancelled run hides exactly the pattern that identifies a clock or a path bug.
@@ -57,6 +69,11 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
+          # There is nothing to lock -- this package has zero runtime dependencies -- but
+          # the dev extra pulls a toolchain on every one of nine cells, and two of those
+          # runners bill by the minute.
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install
         run: |
@@ -87,5 +104,8 @@ jobs:
       # marker is the declared contract, the missing variable is what actually makes the
       # tests skip, and neither one alone is worth relying on for something that can stop
       # a machine.
+      # `faulthandler_timeout` in pyproject.toml is what makes a hang here legible: the
+      # stacks land in this step's log about a minute in, long before `timeout-minutes`
+      # kills the job, so the log names the test and the await instead of just stopping.
       - name: pytest
-        run: python -m pytest tests -q -m "not hardware"
+        run: python -m pytest tests -q -m "not hardware" --durations=10

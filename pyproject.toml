@@ -64,6 +64,18 @@ packages = ["src/aslmp"]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
 asyncio_mode = "auto"
+
+# Dump every thread's stack if one test runs longer than this, then carry on.
+#
+# This is not a timeout and it does not fail or kill anything: it is the difference
+# between a CI log that stops dead and one that names the test and shows the exact await
+# it is parked on. Earned on 2026-09-24, when four cells of the matrix hung inside pytest
+# for fourteen minutes and the logs said nothing at all about which test or where.
+#
+# 60 s is far past any honest test here -- the whole suite runs in about two minutes --
+# so this only ever fires on a genuine hang. It is deliberately well under the CI job's
+# `timeout-minutes`, so the dump is already in the log when the job is killed.
+faulthandler_timeout = 60
 markers = [
     "hardware: needs a real PLC; skipped unless ASLMP_TEST_HOST is set",
     "simulator: needs the aslmp.testing simulator",
