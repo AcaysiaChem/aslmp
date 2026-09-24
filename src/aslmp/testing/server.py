@@ -71,6 +71,10 @@ _REQUEST_MIN_UNITS: Final = 6
 timer, the command and the subcommand. An ``L`` below this describes no request."""
 
 _READ_CHUNK: Final = 65536
+
+_CLOSE_TIMEOUT: Final = 2.0
+"""How long ``aclose()`` waits for a closed listener to let go. See
+:meth:`PlcSimulator._finish_closing` for why this is bounded at all."""
 """How much the server asks the socket for at once.
 
 Deliberately large: reading in small pieces would hide the coalescing corruption, which
@@ -299,7 +303,7 @@ class PlcSimulator:
             bound.writers.clear()
             if bound.server is not None:
                 bound.server.close()
-                await bound.server.wait_closed()
+                await self._finish_closing(bound)
             if bound.transport is not None:
                 bound.transport.close()
         for task in list(self._tasks):
@@ -307,6 +311,54 @@ class PlcSimulator:
         self._tasks.clear()
         self._bound.clear()
         self._started = False
+
+    async def _finish_closing(self, bound: _Bound) -> None:
+        """Wait for a closed listener to let go of its connections, but never forever.
+
+        ``Server.wait_closed()`` waits for every ACCEPTED connection to detach, and there
+        is a window in which one exists that this simulator has never been told about and
+        therefore cannot have closed. asyncio attaches a new transport to the server
+        inside the transport's constructor and only then schedules ``connection_made``,
+        so between those two steps the connection is in ``server._clients`` while the
+        handler that would register its writer has not run. ``aclose()`` closes the
+        writers it knows about, ``server.close()`` only stops listening, and nothing is
+        ever going to close that one: ``wait_closed()`` then waits on it forever.
+
+        Measured on 2026-09-24, Python 3.13.14 on Windows, by connecting a raw blocking
+        socket and stepping the loop a controlled number of times before calling
+        ``aclose()``::
+
+            yields=0  server._clients=0  bound.writers=0  -> returned
+            yields=2  server._clients=1  bound.writers=0  -> HUNG
+            yields=5  server._clients=1  bound.writers=1  -> returned
+
+        It is a one-iteration window and it was invisible until recently: ``wait_closed()``
+        returned immediately before CPython 3.12.1 and only waits from 3.12.1 on. That is
+        why CI hung on every 3.12 cell, on no 3.11 cell, and on 3.13 only where the runner
+        happened to land in the window (2026-09-24, nine-cell matrix, commit d78ef84).
+
+        3.13 added ``abort_clients()`` for exactly this and it makes the teardown
+        deterministic. Below 3.13 there is no public way to reach that connection, so the
+        wait is bounded instead and the simulator SAYS it gave up rather than hanging the
+        caller's test suite. A test double that cannot be torn down is worse than one that
+        tears down loudly.
+        """
+        abort = getattr(bound.server, "abort_clients", None)
+        if abort is not None:  # CPython 3.13+
+            abort()
+        assert bound.server is not None  # narrowed by the caller
+        try:
+            await asyncio.wait_for(bound.server.wait_closed(), _CLOSE_TIMEOUT)
+        except TimeoutError:
+            self._event(
+                bound.entry,
+                "close_timed_out",
+                f"the listener stopped accepting but a connection did not detach within "
+                f"{_CLOSE_TIMEOUT:g} s, so aclose() stopped waiting for it. On CPython "
+                f"below 3.13 a connection accepted in the instant before close cannot be "
+                f"reached to be closed; it goes when the process does. The simulator is "
+                f"shut down either way.",
+            )
 
     async def __aenter__(self) -> Self:
         await self.start()
