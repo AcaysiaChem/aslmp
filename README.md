@@ -1,8 +1,39 @@
 # aslmp
 
-An async SLMP client for Mitsubishi MELSEC PLCs. Zero runtime dependencies, `mypy --strict`
-clean, and built from what one real CPU actually does rather than from what its manual says
-it does.
+> ## Safety notice
+>
+> **This library writes to industrial control equipment.** A value that reaches the wrong
+> device, or a wrong value that reaches the right one, moves whatever that device drives. With
+> `allow_remote_control=True` it can also halt a running CPU.
+>
+> **It is not a safety system.** It carries no functional-safety rating — no SIL, no PL — no
+> certification of any kind, and it has never been assessed by a functional-safety body.
+> **Interlocks, emergency stop, and anything a person's safety depends on belong in the PLC
+> program and in hardware**, not in a Python client on the far side of a network that can be
+> slow, lossy, or simply absent.
+>
+> **The failure modes on this wire are quiet, and we measured these ones ourselves.** Two TCP
+> requests in flight at once return **one** response — for the wrong request — with end code
+> `0x0000`. A UDP burst deeper than 32 loses the excess with no end code and no ICMP. `Y10`
+> typed as if it were decimal lands on the **11th** output, because X and Y are octal on iQ-F,
+> and the CPU answers `0x0000` either way. None of these look like failures from the host.
+>
+> **SLMP has no authentication and no encryption.** Anyone who can reach the port can read and
+> write any device on the CPU, including outputs. See [`SECURITY.md`](SECURITY.md) before you
+> put an SLMP port on any network.
+>
+> **No warranty.** This software is provided under Apache-2.0 on an "AS IS" BASIS, WITHOUT
+> WARRANTIES OR CONDITIONS OF ANY KIND — see [`LICENSE`](LICENSE), sections 7 and 8. Whether it
+> belongs anywhere near your plant is your decision and your responsibility.
+
+[![CI](https://github.com/AcaysiaChem/aslmp/actions/workflows/ci.yml/badge.svg)](https://github.com/AcaysiaChem/aslmp/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
+[![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue)](LICENSE)
+
+An async SLMP client for Mitsubishi MELSEC PLCs — SLMP is Seamless Message Protocol, the
+successor to MC protocol, and it is what a MELSEC CPU speaks over Ethernet. Zero runtime
+dependencies, `mypy --strict` clean, and built from what one real CPU actually does rather
+than from what its manual says it does.
 
 ```python
 import asyncio
@@ -659,11 +690,49 @@ whole package. Details in [`docs/errors.md`](docs/errors.md).
 
 ---
 
+## Safety
+
+The notice at the top of this file is the short version. This section is what it means in code.
+
+**Nothing in this library is a safety interlock.** There is no watchdog, no deadman, no
+safe-state-on-disconnect and no attempt at one, because a client on the far side of a network
+cannot implement any of them honestly: a host that has crashed looks exactly like a host that is
+writing the same value over and over. The API documentation does call `allow_remote_control` an
+*interlock*, and that word means a software gate against your own code's mistakes — never a
+safety function, and never something a person's safety may rest on. **Anything a person's safety
+depends on belongs in the PLC program and in hardware**, where it keeps working when this
+process, its host, or the switch between them does not.
+
+What this side can do, it does:
+
+- `profile=` is required with no generic fallback, because `Y20` is output 16 on an FX5U and
+  output 32 on an iQ-R and **both CPUs answer `0x0000`**.
+- X/Y literals are octal on iQ-F and the digits 8 and 9 are refused, because the CPU accepts
+  `Y8` and answers `0x0000`.
+- Declared bounds (`F32(minimum=…, maximum=…)`) are checked on reads **and before a write
+  leaves this process**. Nothing is ever clamped to fit; a value outside its range raises.
+- `Concurrency.STRICT` is the default, so a second in-flight TCP request raises rather than
+  silently returning the wrong response.
+- Remote RUN / STOP / PAUSE / RESET / Latch Clear are gated behind
+  `Plc(allow_remote_control=True)`, and no CLI subcommand can reach them.
+
+None of that makes a wrong setpoint safe. It makes a *wrong address* and a *wrong declared
+type* loud, which is a different and smaller thing. Bring up new code against a CPU that is not
+attached to anything that can hurt someone or break something, and read
+[`docs/unverified.md`](docs/unverified.md) first if your CPU is not an FX5U-32MT/DS on firmware
+1.065 — that is the whole of our hardware evidence.
+
+---
+
 ## Security
 
+Full threat model, deployment guidance and reporting: [`SECURITY.md`](SECURITY.md).
+
 **SLMP has no encryption and no authentication.** Anything that can reach the port can read and
-write device memory, and — if Remote Reset is enabled — stop the CPU. The remote-password
-commands (`0x1630` / `0x1631`) send the password as literal characters in the clear.
+write device memory — including outputs — and, on a CPU whose parameters allow it, issue Remote
+RUN, STOP and PAUSE. This is a property of the protocol, not of this library, and no client can
+fix it. The remote-password commands (`0x1630` / `0x1631`) send the password as literal
+characters in the clear.
 
 Treat an SLMP port exactly as you would an unauthenticated telnet port on a machine that moves
 physical things:
@@ -676,7 +745,10 @@ physical things:
 
 Published vulnerabilities in the surrounding Mitsubishi Ethernet/SLMP surface, for context on
 why the port is not a place to be relaxed: CVE-2020-5594, CVE-2020-16226, CVE-2023-4699,
-CVE-2025-7405, CVE-2025-7731. This library does not defend against any of them; it is a client.
+CVE-2025-7405 and CVE-2025-7731 — missing authentication, cleartext credentials, and
+predictable TCP sequence numbers that let a legitimate device be impersonated. Each is
+summarised with its CVSS score in [`SECURITY.md`](SECURITY.md). This library defends against
+none of them; it is a client.
 
 ---
 
@@ -710,6 +782,19 @@ exist only because somebody else found the bug first, and say so in their docstr
   Apache-2.0, a straight licence match, attributed in `NOTICE`.
 - **pymcprotocol**, **pymelsec**, **PySLMPClient**, **slmp-rs**, **libslmp2**, **Esmool**,
   **ProtoForge** — each contributed at least one regression test.
+
+**On the adverse comparisons in this source tree.** Roughly thirty-five docstrings name one
+of these projects and a specific behaviour: `pymcprotocol` turning `[111, 222, 333, 444]`
+into `[111, 222, 0, 0]`, and so on. Every one of them exists to say *why a guard is there*,
+not to rank anybody — a rule with a reason ages better than a rule without one, and the
+reason is usually that somebody else hit the wall first.
+
+Each is a statement about **the version we read, on the date we read it**, and about nothing
+else. Free software gets fixed, these are all live projects, and a claim that was true of one
+release is not a claim about the next. If we have described your project wrongly, or
+described a version you have since fixed, **open an issue and we will correct it** — the same
+standard we hold our own hardware claims to, where a measurement without its conditions has
+already cost us one published number we had to withdraw.
 
 ---
 
@@ -759,4 +844,16 @@ Architecture and the layering rules that hold it together: [`docs/architecture.m
 
 ## Licence
 
-Apache-2.0. See `LICENSE` and `NOTICE`.
+Apache-2.0, including the "AS IS" disclaimer of warranties in section 7 and the limitation of
+liability in section 8. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+
+## Trademarks
+
+MELSEC, iQ-F, iQ-R, MELSOFT, GX Works3, FX5U, FX5UC, FX5UJ and FX5S are trademarks of
+Mitsubishi Electric Corporation. SLMP and CC-Link are trademarks of the CC-Link Partner
+Association. Other names may be trademarks of their respective owners.
+
+**This project is independent.** It is not affiliated with, endorsed by, sponsored by or
+certified by Mitsubishi Electric Corporation, the CC-Link Partner Association, or any other
+vendor. Those names appear here only to say, accurately, what this client talks to and which
+documents it was written from.

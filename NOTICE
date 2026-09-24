@@ -15,6 +15,12 @@ implementation (SLMP.h / SLMP.c, Copyright 2016 CC-Link Partner Association),
 as redistributed in the Texas Instruments Processor SDK. No CLPA code is
 included in this distribution.
 
-SLMP, MELSEC, iQ-F, iQ-R, GX Works3 and FX5U are trademarks of Mitsubishi
-Electric Corporation. This project is not affiliated with, endorsed by, or
-sponsored by Mitsubishi Electric Corporation or the CC-Link Partner Association.
+MELSEC, iQ-F, iQ-R, MELSOFT, GX Works3, FX5U, FX5UC, FX5UJ and FX5S are
+trademarks of Mitsubishi Electric Corporation. SLMP and CC-Link are trademarks
+of the CC-Link Partner Association. Other names may be trademarks of their
+respective owners. These names are used only to identify the protocol and the
+equipment this software communicates with.
+
+This project is independent: not affiliated with, endorsed by, sponsored by or
+certified by Mitsubishi Electric Corporation, the CC-Link Partner Association,
+or any other vendor.
