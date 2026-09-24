@@ -39,6 +39,11 @@ dev = [
     "hypothesis>=6.100",
     "mypy>=1.11",
     "ruff>=0.6",
+    # tests/unit/test_wheel_contents.py builds a wheel and inspects it, so the build
+    # backend has to be importable by the test run -- not only by the isolated build
+    # env pip creates. CI caught this on all nine cells; it passed locally only
+    # because a previous `pip install .` had left hatchling in the venv.
+    "hatchling>=1.25",
 ]
 
 [project.urls]
