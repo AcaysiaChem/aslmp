@@ -323,6 +323,20 @@ _LABEL_WIDTH: Final = 10
 _LEAD: Final = "  "
 _WIDTH: Final = 96
 _BYTE_LIMIT: Final = 24
+
+SECRET_BEARING_COMMANDS: Final = frozenset({0x1630, 0x1631})
+"""Commands whose request frame carries a secret, so its bytes are never rendered.
+
+``1630`` Unlock and ``1631`` Lock send the remote password as **literal characters** in
+both codings -- there is no hashing and no challenge in SLMP. A 3E binary request puts the
+first character at byte 17, and :data:`_BYTE_LIMIT` is 24, so an ordinary diagnostic would
+print seven characters of a live PLC password. People paste tracebacks into issues.
+
+The frame is withheld rather than truncated or masked, because a partial rendering invites
+exactly the reasoning that leaks the rest: the length is still reported, since that is a
+property of the request and not of the secret. This mirrors the rule the rest of the
+package follows -- withhold, never substitute.
+"""
 _NS_PER_MS: Final = 1_000_000.0
 
 
@@ -476,7 +490,15 @@ class SlmpError(Exception):
         if sent is None and diagnostics.tx is not None:
             sent = diagnostics.tx.request_frame
         if sent:
-            lines += _labelled("sent", _hexdump(sent))
+            request = diagnostics.request
+            if request is not None and request.command in SECRET_BEARING_COMMANDS:
+                lines += _labelled(
+                    "sent",
+                    f"withheld: a 0x{request.command:04X} request carries the remote "
+                    f"password in clear ({len(sent)} bytes)",
+                )
+            else:
+                lines += _labelled("sent", _hexdump(sent))
         received = diagnostics.received_frame
         if received is None and diagnostics.tx is not None:
             received = diagnostics.tx.response_frame

@@ -799,3 +799,69 @@ def test_exceptions_survive_a_pickle_round_trip(error: SlmpError) -> None:
     assert type(restored) is type(error)
     assert str(restored) == str(error)
     assert restored.args == error.args
+
+
+def test_a_password_request_frame_is_withheld_from_the_diagnostic() -> None:
+    """``1630``/``1631`` send the password as literal characters. People paste tracebacks.
+
+    SLMP has no hashing and no challenge: the remote password goes on the wire as the
+    characters themselves, in both codings. A 3E binary request puts the first one at byte
+    17 and the diagnostic hexdump prints 24, so before this the ordinary rendering of a
+    failed unlock published seven characters of a live PLC password into whatever issue
+    tracker the user pasted it in.
+
+    The frame is withheld rather than masked. A partial rendering invites the reasoning
+    that recovers the rest, and withholding is what the rest of this package does with
+    anything it cannot stand behind.
+    """
+    from aslmp.commands.password import LockPassword, UnlockPassword
+    from aslmp.errors import SECRET_BEARING_COMMANDS
+
+    secret = "SUPERSECRET"
+    frame = bytes.fromhex("500000ffff03000f00100030160000") + secret.encode("ascii")
+
+    for command, code in ((UnlockPassword(secret), 0x1630), (LockPassword(secret), 0x1631)):
+        assert code in SECRET_BEARING_COMMANDS
+
+        class Request:
+            # Bound as defaults, not closed over: ruff B023, and a loop-variable
+            # closure here would quietly test the last command twice.
+            def __init__(self, code: int = code, described: str = command.describe()) -> None:
+                self.command, self.subcommand = code, 0x0000
+                self.request_bytes = len(frame)
+                self._described = described
+
+            def describe(self) -> str:
+                return self._described
+
+        rendered = str(
+            SlmpProtocolError(
+                "the CPU answered with a malformed frame",
+                diagnostics=Diagnostics(request=Request(), sent_frame=frame),
+            )
+        )
+        assert secret not in rendered
+        assert secret.encode("ascii").hex(" ").upper() not in rendered.upper()
+        assert "withheld" in rendered
+        # The length is a property of the request, not of the secret, so it still shows.
+        assert str(len(frame)) in rendered
+        # describe() must not carry it either -- that is the other way it would escape.
+        assert secret not in command.describe()
+        assert "11 characters" in command.describe()
+
+
+def test_an_ordinary_frame_is_still_dumped() -> None:
+    """The withholding is narrow. A read must still print its bytes, or diagnosis dies."""
+
+    class Request:
+        command, subcommand, request_bytes = 0x0401, 0x0000, 15
+
+        def describe(self) -> str:
+            return "read_words('D0', 2)"
+
+    frame = bytes.fromhex("500000ffff03000c00100001040000")
+    rendered = str(
+        SlmpProtocolError("x", diagnostics=Diagnostics(request=Request(), sent_frame=frame))
+    )
+    assert "50 00 00 FF" in rendered
+    assert "withheld" not in rendered
