@@ -49,6 +49,35 @@ developing on the newest one is how the clock bug in
 [`src/aslmp/_clock.py`](src/aslmp/_clock.py) survived. Any supported version works; just
 know which one you are on.
 
+Better still, have all three, because knowing which one you are on turned out not to be
+enough:
+
+```
+for v in 3.11 3.12 3.13; do
+  uv venv --python $v ".venv$v" && uv pip install --python ".venv$v" -e ".[dev]"
+done
+```
+
+On 2026-09-24 the matrix went red and four of its nine cells hung inside pytest for
+fourteen minutes apiece. Everything was green locally, on the only interpreter installed,
+which was 3.13 -- and 3.13 was the one cell that passed. Every one of the seven distinct
+defects behind that run was diagnosed in minutes once 3.11 and 3.12 existed on the machine,
+and not one of them was reproducible on 3.13 alone. A sample, because the pattern is the
+point and none of these is exotic:
+
+- `Server.wait_closed()` returned immediately before CPython 3.12.1 and genuinely waits
+  from 3.12.1 on. A handler that returned without closing its writer was therefore inert
+  on 3.11 and hung forever on 3.12.
+- Reading an enum member costs an allocation on 3.11 and nothing from 3.12, which quietly
+  broke the "allocates nothing after construction" guarantee on the oldest supported
+  interpreter only.
+- `import runpy` pulls `threading` on 3.11 and not on 3.12 or 3.13, so an import-cost test
+  reported its own probe as a leak.
+
+Run the three checks on the oldest and the newest at minimum before pushing. A cell you
+cannot reproduce is a cell you will be debugging through CI logs, fifteen minutes at a
+time.
+
 Plain `pip` does the same job:
 
 ```

@@ -527,7 +527,11 @@ async def test_udp_drops_silently_past_the_in_flight_depth() -> None:
     a lost datagram must raise its own named error carrying the serial and the depth --
     never a retry and never a generic timeout.
     """
-    board = HEALTHY.replace(udp_drop_above_depth=8, udp_service_delay_s=0.01)
+    # 0.05 s, not 0.01: below the event loop's datagram delivery granularity
+    # nothing is ever concurrently in flight and the ceiling is never reached. On
+    # Windows before CPython 3.13 that granularity is ~15.6 ms, so a 10 ms service
+    # time answered all 64 and dropped none -- measured 2026-09-24 on 3.11.15.
+    board = HEALTHY.replace(udp_drop_above_depth=8, udp_service_delay_s=0.05)
     async with simulator(pathology=board) as plc:
         host, port = plc.address(UDP)
         loop = asyncio.get_running_loop()
@@ -597,7 +601,21 @@ async def test_an_ondemand_frame_arrives_with_a_request_subheader() -> None:
     async with simulator(entries=(Entry(name=TCP, protocol="tcp"),)) as plc:
         host, port = plc.address(TCP)
         reader, writer = await asyncio.open_connection(host, port)
+        # Retry until a peer is actually registered, bounded. open_connection returns as
+        # soon as the CLIENT's handshake completes, which does not require the server's
+        # handler to have run, so the connection may not be in the entry's writer list
+        # yet and push_ondemand has nobody to send to. It returns 0 and sends nothing in
+        # that case, which is what makes retrying safe rather than duplicating frames.
+        # Failed on both macOS cells while passing on ubuntu and windows (CI 2026-09-24):
+        # a scheduling difference, not a defect in the push.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5.0
         sent = await plc.push_ondemand(b"\x01\x02")
+        while sent == 0:
+            if loop.time() > deadline:
+                raise AssertionError("no peer was ever registered for the tcp entry")
+            await asyncio.sleep(0.005)
+            sent = await plc.push_ondemand(b"\x01\x02")
         assert sent == 1
         raw = await asyncio.wait_for(reader.readexactly(11 + 2), 1.0)
         assert raw[:2] == b"\x50\x00", "a request subheader: the PLC is the sender"

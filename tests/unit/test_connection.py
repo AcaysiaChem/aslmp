@@ -293,8 +293,15 @@ async def test_the_previous_response_starts_the_next_host_gap() -> None:
 async def test_a_segmented_response_is_one_message() -> None:
     """The measured 1460-byte MSS split, arriving as two chunks 3 ms apart."""
     whole = a_response(payload=bytes(400))
+    # 0.05 s, not 0.01. The gap has to outlast the CLIENT loop's wake-up granularity or
+    # the client never observes the split: both writes land before its first read and it
+    # sees one whole message. On Windows before CPython 3.13 that granularity is the same
+    # ~15.6 ms tick this package documents for `time.monotonic`, so 10 ms is below it --
+    # on 3.11.15 the chunks came back 9 and 402 bytes, neither partial, and `segmented`
+    # was False (measured 2026-09-24). The server's split is real either way; the
+    # question is only whether the client is awake to see it.
     async with FakeServer(
-        default=Reply(chunks=(whole[:11], whole[11:]), gap=0.01)
+        default=Reply(chunks=(whole[:11], whole[11:]), gap=0.05)
     ) as server:
         connection = await a_connection(server)
         try:

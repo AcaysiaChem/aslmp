@@ -431,9 +431,23 @@ async def test_an_exchange_that_reads_no_response_closes_the_socket() -> None:
                 await transport.exchange(
                     REQUEST, FixedLength(20), a_deadline(), a_timing()
                 )
+            # Inside the block, and bounded, on purpose. The client abandons this
+            # connection the instant the request is written, so asserting a SERVER-side
+            # fact after the server has been torn down races the handler's first read:
+            # it failed on macOS while passing on ubuntu and windows (CI 2026-09-24).
+            # Waiting here gives the handler the scheduling it is entitled to, while the
+            # listener is still up, and turns a platform race into a stated deadline.
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 5.0
+            while not server.received:
+                if loop.time() > deadline:
+                    raise AssertionError(
+                        "the server never read the request the client says it sent"
+                    )
+                await asyncio.sleep(0.005)
+            assert server.received == [REQUEST]
         finally:
             await transport.close()
-    assert server.received == [REQUEST]
 
 
 async def test_the_read_stops_at_the_message_and_leaves_the_next_one_alone() -> None:

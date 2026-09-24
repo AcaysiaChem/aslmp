@@ -487,6 +487,21 @@ async def probe_segmentation(board: Pathology) -> Observation:
         return (tx_lengths(plc), tx_gaps_over_50ms(plc))
 
 
+UDP_SERVICE_DELAY_S: Final = 0.05
+# 0.05 s and not 0.01: the service delay has to exceed the event loop's datagram
+# DELIVERY granularity or nothing is ever concurrently in flight and the depth
+# ceiling cannot be reached. On Windows before CPython 3.13 that granularity is the
+# same ~15.6 ms tick this package already documents for `time.monotonic`, so a 10 ms
+# service time is below it: the loop hands over one datagram per tick and each is
+# answered before the next arrives. Measured 2026-09-24, 32-datagram burst, depth 4:
+#
+#     3.11.15   0.01 -> 32/32 answered (no drops)   0.05 -> 4/32   0.1 -> 4/32
+#     3.13.14   0.01 ->  4/32                       0.05 -> 4/32   0.1 -> 4/32
+#
+# The switch was never broken on 3.11; the burst just never got deep enough to reach
+# it, so the test proved nothing there rather than proving something false.
+
+
 async def burst_udp(
     board: Pathology, count: int, *, collect: float, gap: float = 0.0
 ) -> Observation:
@@ -644,11 +659,12 @@ PROBES: Final[dict[tuple[str, str], SwitchProbe]] = {
     ("udp_drop_above_depth", "feed_datagram"): SwitchProbe(
         values=(None, 4),
         run=probe_udp_depth,
-        base=Pathology(udp_service_delay_s=0.01),
+        # See UDP_SERVICE_DELAY_S for why this is 0.05 and not 0.01.
+        base=Pathology(udp_service_delay_s=UDP_SERVICE_DELAY_S),
         why="a burst past the in-flight ceiling loses datagrams with no error of any kind",
     ),
     ("udp_service_delay_s", "_serve_datagram"): SwitchProbe(
-        values=(0.0, 0.01),
+        values=(0.0, UDP_SERVICE_DELAY_S),
         run=probe_udp_depth,
         base=Pathology(udp_drop_above_depth=4),
         why=(
