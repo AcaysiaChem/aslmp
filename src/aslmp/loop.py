@@ -78,8 +78,11 @@ class OverrunPolicy(enum.Enum):
         :attr:`Cadence.latency`.
     ``RAISE``
         Raise :class:`SlmpCadenceOverrunError` out of the ``async for``. For a loop
-        whose whole contract is the period -- an interlock, a watchdog feed -- a missed
-        deadline is a failure, not a statistic.
+        whose whole contract is the period -- a fixed-rate sampler, a log that must not
+        gap -- a missed deadline is a failure, not a statistic. It is **not** a watchdog
+        and must not be used as one: a host that has stopped looks exactly like a host
+        that is on time, from the CPU's side, and the deadline this policy enforces is
+        checked here rather than there.
     ``STOP``
         End the iteration cleanly, the way any exhausted iterator does. The ``async
         for`` falls through to the code after it, which is where an orderly shutdown

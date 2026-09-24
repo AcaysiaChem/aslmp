@@ -3,11 +3,36 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.env
 build/
 dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.tox/
+.nox/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
+*.pcap
 *.pcapng
+
+# Hypothesis writes its own .hypothesis/.gitignore, so git already hides this
+# directory and the hatchling sdist did not: .hypothesis/constants/ is a cache of
+# literals mined from this checkout, each file headed with its absolute local path.
+# 265 of them shipped in the sdist before this line existed.
+.hypothesis/
+
+# Editor and OS droppings
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# uv.lock is deliberately not committed: this package has ZERO runtime dependencies,
+# so a lock file pins only the dev toolchain and would otherwise be swept into the sdist.
+# Contributors get their environment from `pip install -e ".[dev]"`; CI pins nothing.
+uv.lock

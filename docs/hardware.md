@@ -573,16 +573,18 @@ which is exactly what the measurement above predicts, and `stop(verify=False)` c
   is an absent response, and the one that reboots the CPU.
 - **Remote Latch Clear (`0x1005`) has never been sent** either. Clearing a latch range on a
   machine nobody is watching is not a measurement worth taking.
-- **We could not force the lie that makes `verify=True` the default.** Mitsubishi documents
-  Remote RUN as completing with end code `0x0000` while the switch is in STOP and the CPU does
-  not run (SH(NA)-080956ENG-M p.131). The bench CPU's switch is in RUN, and with it there, RUN
-  was truthful: sent with `verify=False`, end code `0x0000`, and D8 advanced. So the reason for
-  the default remains a **manual claim, not our measurement** — see
-  [`unverified.md`](unverified.md). The reviewer who prompted this work independently reports
-  seeing **GX Works3 announce "The RUN operation has been completed" while P.RUN stayed dark and
-  the CPU never scanned** — the same lie through Mitsubishi's own tool. It raises confidence in
-  the manual's warning; it is somebody else's observation through a GUI, with no frame capture
-  and no end code written down, and it is **not a measurement of ours**.
+- **We could not force the behaviour that makes `verify=True` the default.** Mitsubishi
+  documents Remote RUN as completing with end code `0x0000` while the switch is in STOP and
+  the CPU does not run (SH(NA)-080956ENG-M p.131) — a success code for a RUN that does not
+  happen, documented as such by the vendor rather than hidden. The bench CPU's switch is in
+  RUN, and with it there, RUN was truthful: sent with `verify=False`, end code `0x0000`, and
+  D8 advanced. So the reason for the default remains a **manual claim, not our measurement**
+  — see [`unverified.md`](unverified.md). The reviewer who prompted this work independently
+  reports seeing **GX Works3 announce "The RUN operation has been completed" while P.RUN
+  stayed dark and the CPU never scanned** — the same documented behaviour, seen through
+  Mitsubishi's own tool. It raises confidence in the manual's warning; it is somebody else's
+  observation through a GUI, with no frame capture and no end code written down, and it is
+  **not a measurement of ours**.
 - **The `1002`/`1005`/`1006` two-byte fixed field.** The iQ-F profile's `00 00` was sent and
   accepted, but `01 00` was never sent, so we cannot say whether `00 00` is *required* or merely
   *accepted*. `A-REMOTE-FIXED` stays open.

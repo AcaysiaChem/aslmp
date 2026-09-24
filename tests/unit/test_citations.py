@@ -388,7 +388,22 @@ def test_manuals_table_is_self_consistent() -> None:
         assert row["title"], f"manuals.tsv {key}: no title"
         assert row["status"] in {"read", "not_obtained"}, f"manuals.tsv {key}: bad status"
         if row["status"] == "read":
-            assert row["url"], f"manuals.tsv {key}: read but no URL"
+            # A manual we read must be checkable by a reader. Usually that is a URL. For a
+            # SUPERSEDED revision the vendor no longer publishes there is none, and the
+            # answer is not to link a third-party mirror of somebody's copyrighted manual:
+            # two rows here used to do that, one over plain http. So the rule is a URL or
+            # a stated reason there is not one, and never silence.
+            if not row["url"]:
+                assert "no official URL" in row["note"], (
+                    f"manuals.tsv {key}: read, no URL, and no note saying why. Cite an "
+                    f"official URL, or say in the note that none exists for this revision. "
+                    f"Do not link a third-party mirror of a vendor manual."
+                )
+            for mirror in ("atronika", "educazionedigitale"):
+                assert mirror not in row["url"], (
+                    f"manuals.tsv {key}: {mirror} is a third-party mirror of a vendor "
+                    f"manual. Cite the vendor, or cite nothing and say why."
+                )
         else:
             assert not row["url"], f"manuals.tsv {key}: not obtained but has a URL"
 
@@ -1042,6 +1057,9 @@ widen it to.
 
 REQUIRED_TREES = (
     "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
     "docs/",
     "bench/",
     "src/aslmp/",
@@ -1052,8 +1070,15 @@ REQUIRED_TREES = (
 )
 """Trees :func:`all_sources` must actually reach, asserted rather than assumed.
 
-A glob that silently matches nothing is an exemption nobody wrote down. Each of these
-has carried an unconditioned number at some point in this repository's short life.
+A glob that silently matches nothing is an exemption nobody wrote down. ``README.md``,
+``docs/``, ``bench/``, ``src/aslmp/``, the test trees and ``tools/`` are named because
+each has carried an unconditioned number at some point in this repository's short life.
+``CHANGELOG.md``, ``SECURITY.md`` and ``CONTRIBUTING.md`` are named for the opposite
+reason: they are root-level documents that a file list would have left out, and one of
+them quotes a latency figure. The walk itself is now ``REPO.glob("*.md")`` rather than a
+list, so a document added beside them is policed on the day it appears -- a list of
+files is a sibling waiting to happen, which is the failure this whole section exists
+to catch.
 """
 
 HOST_TOKENS = ("192.168.10.41", "192.168.10.36", "argus-bench")
@@ -1126,8 +1151,7 @@ def all_sources() -> list[tuple[str, str]]:
     policing.
     """
     documents = [
-        REPO / "README.md",
-        REPO / "CHANGELOG.md",
+        *sorted(REPO.glob("*.md")),
         *sorted((REPO / "docs").glob("*.md")),
     ]
     sources = [(path.relative_to(REPO).as_posix(), path) for path in documents]

@@ -510,6 +510,53 @@ than a promise.
   behind, or a help string that contradicts its usage line fails the suite instead of waiting
   for the next review.
 
+### Prepared for publication (2026-09-24)
+
+Documentation, disclosure and repository scaffolding, ahead of the repository being opened.
+No change to the client's behaviour, the wire, or any published measurement.
+
+- **`SECURITY.md` is new, and its first half is not about this library.** SLMP has no
+  authentication, no encryption, no integrity protection and no notion of a read-only peer:
+  anything that can reach the configured port can read and write any device the CPU exposes,
+  outputs included, and can issue Remote RUN/STOP/PAUSE on a CPU whose parameters allow it.
+  That is the protocol as published and **no client can fix it**, so the file says what a
+  network and a CPU can do about it instead, explicitly as measures taken there and not as
+  features here. It also records that the `0x1630`/`0x1631` remote password travels as literal
+  characters in both codings, and that the first seven of them land inside the 24-byte hexdump
+  an `aslmp` diagnostic prints -- verified against this package's own encoder, not against a
+  CPU. The second half is how to report a vulnerability in `aslmp`, with no response-time
+  commitment, because there is no security team to promise one.
+- **A safety notice at the top of `README.md`**, above the tagline and the first example. This
+  library writes to industrial control equipment and can halt a CPU; it is not a safety system,
+  carries no SIL or PL rating, no certification of any kind, and has never been assessed by a
+  functional-safety body. Interlocks belong in the PLC program and in hardware. A `Safety`
+  section says the same thing in code terms, and a `Trademarks` section states the independence
+  that `NOTICE` already stated.
+- **`NOTICE` corrected.** SLMP and CC-Link were attributed to Mitsubishi Electric; they are the
+  CC-Link Partner Association's. MELSOFT and the FX5 variants were added.
+- **`allow_remote_control` is a software gate, not a safety interlock**, and both places that
+  could be read the other way now say so. `OverrunPolicy.RAISE` no longer offers "a watchdog
+  feed" as an example of what it is for -- a deadline checked on this side of the network is
+  not a watchdog, and the README had already said the library has none.
+- **A passage about Mitsubishi's documented Remote RUN behaviour was rewritten.** Calling a
+  documented success code a "lie" of the vendor's tool was rhetoric standing where a
+  description belongs; `docs/hardware.md` §15 and `docs/unverified.md` now name the behaviour
+  and leave the word for the thing this library refuses to do to its own callers.
+- **`tests/unit/test_citations.py::all_sources` walks `*.md` at the repository root** rather
+  than a list of two documents, so `SECURITY.md`, `CONTRIBUTING.md` and anything added beside
+  them are held to the same rules as `README.md` from the day they appear. A list of files is a
+  sibling waiting to happen, which is this suite's own recurring finding.
+- **`.hypothesis/` is ignored.** Hypothesis writes its own `.gitignore`, so git hid the
+  directory and `hatchling` did not: the sdist was shipping the constants cache, each file
+  headed with an absolute local path. Also ignored: `.env`, `.tox/`, `.nox/`, `coverage.xml`,
+  `*.pcap` and the usual editor and OS droppings.
+- **Repository scaffolding**: `CONTRIBUTING.md` (safety first, the three checks, the evidence
+  rule, and a walkthrough for converting an unverified row), `CODE_OF_CONDUCT.md` (Contributor
+  Covenant 2.1), a CI workflow over 3.11/3.12/3.13 x Linux/Windows/macOS that refuses to run
+  with `ASLMP_TEST_HOST` set, a release workflow that publishes by OIDC and checks the tag
+  against `src/aslmp/_version.py`, two issue forms whose required fields are `Measurement`'s,
+  and a pull-request template with a provenance section.
+
 ### Known limitations shipped knowingly
 
 Listed in full in [`docs/unverified.md`](docs/unverified.md) and in `aslmp capabilities

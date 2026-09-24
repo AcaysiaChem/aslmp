@@ -398,8 +398,9 @@ AMBIGUITY_4E: Final = Ambiguity(
         "corruption."
     ),
     probe=(
-        "Ask MEAU whether the behaviour is intentional. If it is, defaulting to 4E on "
-        "iQ-F would turn a silent wrong-data failure into a loud SlmpSerialMismatchError."
+        "Ask Mitsubishi technical support whether the behaviour is intentional. If it "
+        "is, defaulting to 4E on iQ-F would turn a silent wrong-data failure into a "
+        "loud SlmpSerialMismatchError."
     ),
 )
 

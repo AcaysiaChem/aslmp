@@ -179,21 +179,22 @@ the card is out, and GX Works3 drove remote STOP and RUN repeatedly through the 
 
 `verify=True` is the **default** on run/stop/pause because Mitsubishi documents Remote RUN as
 completing with end code `0x0000` while the switch is in STOP and the CPU does not run
-(SH(NA)-080956ENG-M p.131). Returning that `0x0000` as success would be a silent lie, so the
-library reads SD203 back and raises `SlmpRemoteStateNotReachedError` if the state was not
+(SH(NA)-080956ENG-M p.131) — a success code for a RUN that does not happen, and documented as
+such. Passing that `0x0000` on to a caller as success would be a silent lie by *this library*,
+so it reads SD203 back and raises `SlmpRemoteStateNotReachedError` if the state was not
 reached.
 
 **We could not force that condition and therefore have not measured it.** The bench CPU's switch
 is in RUN, and with the switch there, Remote RUN is truthful: sent with `verify=False` it
-returned `0x0000` and the scan counter advanced. Reproducing the lie needs physical access to
-the switch, so it remains a claim we take from the manual and implement as if true.
+returned `0x0000` and the scan counter advanced. Reproducing the documented case needs physical
+access to the switch, so it remains a claim we take from the manual and implement as if true.
 
 One corroboration that is **not** our measurement and must not be read as one: the reviewer who
 challenged these numbers independently saw **GX Works3 report "The RUN operation has been
-completed" while P.RUN stayed dark and the CPU never started scanning** — the same lie, through
-Mitsubishi's own tool. It raises our confidence in the manual's warning. It is somebody else's
-observation, taken through a GUI we did not instrument, with no frame capture and no end code
-written down, and it settles nothing.
+completed" while P.RUN stayed dark and the CPU never started scanning** — the same documented
+behaviour, seen through Mitsubishi's own tool. It raises our confidence in the manual's
+warning. It is somebody else's observation, taken through a GUI we did not instrument, with no
+frame capture and no end code written down, and it settles nothing.
 
 ### The remote-control ambiguities, and what sending the commands did and did not settle
 
@@ -263,9 +264,10 @@ What is unverified is everything about 4E on iQ-F *as a supported feature*: whet
 behaviour is intentional, whether it survives a firmware update, and whether it is safe to build
 on. The library permits 4E and does not default to it.
 
-**Question for MEAU:** is 4E on the FX5 built-in port intentional? If yes, defaulting to it on
-iQ-F would turn the measured TCP coalescing corruption into a loud `SlmpSerialMismatchError`, and
-is the largest single correctness win available to this design.
+**Question for Mitsubishi technical support:** is 4E on the FX5 built-in port intentional?
+If yes, defaulting to it on iQ-F would turn the measured TCP coalescing corruption into a
+loud `SlmpSerialMismatchError`, and is the largest single correctness win available to
+this design.
 
 ## Everything, at n=1
 
