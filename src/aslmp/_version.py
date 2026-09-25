@@ -6,4 +6,4 @@ literal exists once. Layer 0: stdlib only, no imports at all.
 
 from __future__ import annotations
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.0"

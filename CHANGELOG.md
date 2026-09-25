@@ -7,7 +7,7 @@ carry two minor versions' notice, and nothing is removed in a minor release.
 Dates are the date the work landed. Hardware statements mean **MELSEC iQ-F FX5U-32MT/DS,
 firmware 1.065** unless another CPU is named.
 
-## Unreleased — 0.1.0.dev0
+## 0.1.0 — 2026-09-25
 
 The first assembled version of the library. Everything below is new; there is nothing to
 migrate from.
