@@ -64,7 +64,7 @@ from aslmp.commands.monitor import MonitorRegistration
 from aslmp.commands.random import RandomPoint, RandomWrite
 from aslmp.connection import ConnectionInfo, ConnectionState
 from aslmp.errors import SlmpConfigurationError, SlmpNotConnectedError
-from aslmp.identity import CpuIdentity, CpuStatus
+from aslmp.identity import CpuDiagnostics, CpuIdentity, CpuStatus
 from aslmp.observability import Counters, EventSink, MetricsSnapshot
 from aslmp.profile import Capability, CpuProfile, Encoding, Link
 from aslmp.results import RandomReading, SplitReading
@@ -960,6 +960,14 @@ class Plc:
         say on no evidence.
         """
         return self._runtime.submit(self._plc.read_cpu_status())
+
+    def read_diagnostics(self) -> CpuDiagnostics:
+        """State, error flag, latest error code and its stamp, and the clock: one ``0403``.
+
+        iQ-F only -- the register layout was measured on an FX5U and is refused on other
+        families before anything is sent. See :meth:`aslmp.client.Plc.read_diagnostics`.
+        """
+        return self._runtime.submit(self._plc.read_diagnostics())
 
     def clear_error(self) -> None:
         """``1617``: clear the own-station error code and the error LED."""

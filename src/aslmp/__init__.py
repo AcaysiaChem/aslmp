@@ -406,6 +406,9 @@ if TYPE_CHECKING:
         ProbeOutcome as ProbeOutcome,
     )
     from aslmp.identity import (
+        CpuDiagnostics as CpuDiagnostics,
+    )
+    from aslmp.identity import (
         CpuIdentity as CpuIdentity,
     )
     from aslmp.identity import (
@@ -719,6 +722,7 @@ _EXPORTS: Final[dict[str, str]] = {
     "Refusal": "aslmp.profile",
     "CpuIdentity": "aslmp.identity",
     "CpuStatus": "aslmp.identity",
+    "CpuDiagnostics": "aslmp.identity",
     # -- addresses, frames and provenance --------------------------------------------
     "DeviceAddress": "aslmp.wire.address",
     "parse_address": "aslmp.wire.address",

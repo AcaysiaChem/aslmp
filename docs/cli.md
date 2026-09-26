@@ -69,6 +69,35 @@ and the CPU answered inside the deadline just now.
 `--samples N` adds N further `0x0619` round trips and prints min/median/max. That is a smoke
 test, not a measurement — use `aslmp bench` for a distribution with a control.
 
+## `aslmp status HOST --profile KEY`
+
+The CPU's operating state, whether it is reporting a self-diagnostic error, the latest error
+code and when it was stamped, and the PLC's clock -- read in **one** `0x0403`, so every line
+describes the same instant.
+
+```
+$ aslmp status 192.168.10.250 --port 5003 --profile melsec:iq-f/fx5u
+peer     192.168.10.250:5003
+cpu      FX5U-32MT/DS (model code 0x4A49)
+state    RUN (SD203 = 0)
+error    YES -- SM0 is ON; latest self-diagnostic code 0x3081 (SD0)
+stamped  1980-01-22 11:52:39 by the PLC's clock, 0 s before this read
+clock    1980-01-22 11:52:39 -- before 2000, so almost certainly never set; ...
+```
+
+That is the bench FX5U on 2026-09-26 with a module left unpowered. `aslmp probe` called the
+same CPU healthy, correctly: nothing was wrong with the connection. "0 s before this read" is
+the useful part -- a fault stamped just now is one that is still happening.
+
+The error's age is measured between two readings of the PLC's own clock taken in the same
+transaction, so it is right even when that clock was never set. aslmp has no table of
+self-diagnostic codes and prints none; GX Works3 names the code under
+**Diagnostics -> Module Diagnostics**.
+
+The register layout was measured on an iQ-F CPU. On any other family `status` reads only the
+operating state (`SD203`) and says so, rather than assume the other registers sit in the same
+places. Read-only: it never clears an error.
+
 ## `aslmp read HOST ADDRESS --profile KEY`
 
 ```

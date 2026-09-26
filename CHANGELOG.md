@@ -20,6 +20,15 @@ firmware 1.065** unless another CPU is named.
 
 ### Added
 
+- **`aslmp status`** and `Plc.read_diagnostics()`: the CPU's operating state, its
+  self-diagnostic error flag, the latest error code and when it was stamped, and its clock,
+  in one `0x0403`. `aslmp probe` answers whether a connection entry is served, and on
+  2026-09-25 the bench FX5U probed perfectly healthy while it ran with an error raised
+  continuously for a module left unpowered; nothing short of reading special registers by
+  hand could say so. The error's age is taken between two readings of the PLC's own clock,
+  so it is right even on a clock that was never set. iQ-F only -- the register layout was
+  measured on an FX5U and is not assumed for other families, where `status` reads `SD203`
+  alone and says why. `CpuDiagnostics` is the result type.
 - `SlmpConnectionClosedError`, a subclass of `SlmpConnectionLostError`: what a transaction
   in flight raises when this process closes its connection. Catch it by name to tell a
   shutdown you started from a link you lost; every existing `SlmpConnectionLostError`

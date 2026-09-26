@@ -984,6 +984,26 @@ def test_no_client_in_this_file_can_reach_a_remote_control_command() -> None:
     assert not offenders, "remote control reached in a hardware test: " + ", ".join(offenders)
 
 
+async def test_diagnostics_are_one_consistent_snapshot() -> None:
+    """The layout ``CPU_DIAGNOSTICS_MEASURED`` records, re-read on every hardware run.
+
+    It asserts consistency rather than today's fault, because the bench may or may not be
+    reporting an error when this runs. Whichever it is: one transaction, the same state
+    SD203 reports on its own, a clock that is a date, and -- if SM0 is ON -- an error
+    code and a stamp no later than that clock, which is the same clock.
+    """
+    async with bench() as plc:
+        before = plc.counters.transactions_started
+        found = await plc.read_diagnostics()
+        assert plc.counters.transactions_started == before + 1, "one 0403, not five"
+        assert found.status is await plc.read_cpu_status()
+        assert found.clock is not None, "SD210-SD216 did not hold a date"
+        if found.error:
+            assert found.error_code != 0, "SM0 is ON and SD0 names no error"
+            assert found.error_at is not None, "SM0 is ON and SD1-SD7 are not a date"
+            assert found.error_at <= found.clock, "stamped after the clock that stamped it"
+
+
 async def test_the_bench_is_left_running_and_the_scratch_is_clean() -> None:
     """The last word: the CPU still scans, the setpoint is untouched, scratch is zeroed.
 

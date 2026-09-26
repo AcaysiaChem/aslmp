@@ -99,6 +99,7 @@ from aslmp.connection import Connection, ConnectionInfo, ConnectionState, Txn
 from aslmp.errors import (
     NO_DIAGNOSTICS,
     Diagnostics,
+    SlmpCapabilityError,
     SlmpConfigurationError,
     SlmpError,
     SlmpHandshakeError,
@@ -110,7 +111,15 @@ from aslmp.errors import (
     SlmpVerificationError,
 )
 from aslmp.errors.routing import end_code_error
-from aslmp.identity import CpuIdentity, CpuStatus, cpu_status_command, decode_cpu_status
+from aslmp.identity import (
+    CpuDiagnostics,
+    CpuIdentity,
+    CpuStatus,
+    cpu_diagnostics_points,
+    cpu_status_command,
+    decode_cpu_diagnostics,
+    decode_cpu_status,
+)
 from aslmp.observability import (
     ConnectionEvent,
     Counters,
@@ -119,7 +128,15 @@ from aslmp.observability import (
     LatencyRecorder,
     MetricsSnapshot,
 )
-from aslmp.profile import Capability, ClearMode, CpuProfile, Encoding, Evidence, Link
+from aslmp.profile import (
+    Capability,
+    ClearMode,
+    CpuProfile,
+    Encoding,
+    Evidence,
+    Family,
+    Link,
+)
 from aslmp.profiles import by_key
 from aslmp.results import (
     RandomReading,
@@ -2163,6 +2180,32 @@ class Plc:
         """
         words, tx = await self._run(cpu_status_command(), mutates=False)
         return self._done(decode_cpu_status(words), tx)
+
+    @mirrored
+    async def read_diagnostics(self) -> CpuDiagnostics:
+        """State, error flag, latest error code and its stamp, and the clock: one ``0403``.
+
+        :meth:`read_cpu_status` answers RUN or STOP. This answers "and is anything wrong",
+        which a CPU can be while it runs: on 2026-09-25 the bench FX5U reported an error
+        continuously in RUN for a module left unpowered, and ``aslmp probe`` called the
+        connection healthy throughout -- correctly, because the connection was.
+
+        **iQ-F only.** The register layout was measured on an FX5U
+        (:data:`~aslmp.identity.CPU_DIAGNOSTICS_MEASURED`) and on no other family, so
+        any other profile gets :class:`~aslmp.errors.SlmpCapabilityError` and nothing is
+        sent. :meth:`read_cpu_status` reads SD203 on every family.
+        """
+        if self._profile.family is not Family.IQ_F:
+            raise SlmpCapabilityError(
+                f"read_diagnostics() reads a special-register layout measured on an iQ-F "
+                f"CPU and on no other family; {self._profile.key} is "
+                f"{self._profile.family.value}, and guessing that its clock and error "
+                f"registers sit in the same places, in the same coding, is not something "
+                f"this library does. read_cpu_status() reads SD203 on every family. "
+                f"Nothing was sent."
+            )
+        values, tx = await self._run(ReadRandom(cpu_diagnostics_points()), mutates=False)
+        return self._done(decode_cpu_diagnostics(values), tx)
 
     @mirrored
     async def clear_error(self) -> None:

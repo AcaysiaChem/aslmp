@@ -61,6 +61,7 @@ SUBCOMMANDS: Final[Mapping[str, Subcommand]] = MappingProxyType(
         row.name: row
         for row in (
             _row("probe", "prove a connection entry is live, and say what that proves"),
+            _row("status", "what state the CPU is in, and whether it reports an error"),
             _row("identify", "ask a CPU what it is and print the profile key to pass"),
             _row("read", "read one address, or an array, and print the value"),
             _row("write", "write one address, optionally verifying the read-back"),
