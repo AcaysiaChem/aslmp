@@ -7,6 +7,27 @@ carry two minor versions' notice, and nothing is removed in a minor release.
 Dates are the date the work landed. Hardware statements mean **MELSEC iQ-F FX5U-32MT/DS,
 firmware 1.065** unless another CPU is named.
 
+## Unreleased
+
+### Supported interpreters
+
+- **Python 3.14** is tested in CI on Linux, macOS and Windows, and declared in the
+  classifiers. Nothing in the library's behaviour had to change for it; three tests did,
+  and see "Corrected" below for why.
+- CI also runs **weekly** on a schedule, not only on push. The `Server.wait_closed()`
+  change that hung this project's CI on 2026-09-24 shipped in a patch release, and runner
+  images pick those up without a commit to trigger anything.
+
+### Corrected
+
+- `LatencyRecorder` was described as **allocating nothing after construction**, here in the
+  0.1.0 entry as "allocation-free" and in its docstrings. It **retains** nothing: the ring,
+  the histogram and every counter are fixed-size arrays of machine integers, so its memory
+  does not grow with use. But reading a counter makes a temporary `int` on every CPython,
+  so "allocates nothing" was never literally true, and its tests were checking an
+  interpreter detail rather than the promise. They now check the promise -- nothing kept,
+  however many calls -- and prove the check fires on a real leak.
+
 ## 0.1.0 — 2026-09-25
 
 The first assembled version of the library. Everything below is new; there is nothing to

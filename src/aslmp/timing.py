@@ -132,10 +132,12 @@ class Phase(enum.Enum):
 #:     Phase.ROUND_TRIP     3.11: +48 B      3.13: +0 B
 #:     module-level alias   3.11:  +0 B      3.13: +0 B
 #:
+#: That +48 B is one block left live after five thousand reads, not a cost per read --
+#: the same kind of thing as the freed temporaries CPython 3.14 keeps for reuse, and
+#: bounded the same way. The descriptor call behind it IS paid on every read, though, and
 #: :meth:`Transaction.dominant_phase` runs once per transaction inside
-#: :class:`~aslmp.observability.LatencyRecorder`, which promises to allocate nothing after
-#: construction, and this package supports 3.11. A global load keeps that promise true on
-#: every interpreter it claims rather than only on the one it was developed on.
+#: :class:`~aslmp.observability.LatencyRecorder`, on a control loop's hot path. A global
+#: load skips it on every interpreter this package claims, not only the newest.
 _QUEUE: Final = Phase.QUEUE
 _ENCODE: Final = Phase.ENCODE
 _ROUND_TRIP: Final = Phase.ROUND_TRIP
@@ -561,9 +563,10 @@ class Transaction:
         incomplete transaction has no dominant phase, only a missing one.
         """
         t = self.timing
-        # Written without a container on purpose: LatencyRecorder calls this per
-        # transaction and must allocate nothing after construction. The module-level
-        # aliases are part of that and not a shorthand -- see their definition.
+        # Written without a container on purpose: LatencyRecorder calls this once per
+        # transaction, and a list to take the max of would be built every time. The
+        # module-level aliases are part of that and not a shorthand -- see their
+        # definition.
         best_phase = _QUEUE
         best = t.queue_ns
         value = t.encode_ns

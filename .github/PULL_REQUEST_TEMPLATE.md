@@ -11,9 +11,9 @@ the provenance section if your diff touches a number.
 
 ## Checks
 
-Run all three locally — CI runs them on 3.11, 3.12 and 3.13 across Linux, Windows and
-macOS, and the matrix exists because a bug in this library was visible on exactly one of
-those nine cells.
+Run all three locally — CI runs them on 3.11, 3.12, 3.13 and 3.14 across Linux, Windows
+and macOS, and the matrix exists because a bug in this library was visible on exactly one
+of its cells.
 
 - [ ] `python -m ruff check src tests tools bench`
 - [ ] `python -m mypy`

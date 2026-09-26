@@ -53,7 +53,7 @@ Better still, have all three, because knowing which one you are on turned out no
 enough:
 
 ```
-for v in 3.11 3.12 3.13; do
+for v in 3.11 3.12 3.13 3.14; do
   uv venv --python $v ".venv$v" && uv pip install --python ".venv$v" -e ".[dev]"
 done
 ```
@@ -68,9 +68,9 @@ point and none of these is exotic:
 - `Server.wait_closed()` returned immediately before CPython 3.12.1 and genuinely waits
   from 3.12.1 on. A handler that returned without closing its writer was therefore inert
   on 3.11 and hung forever on 3.12.
-- Reading an enum member costs an allocation on 3.11 and nothing from 3.12, which quietly
-  broke the "allocates nothing after construction" guarantee on the oldest supported
-  interpreter only.
+- Reading an enum member goes through a descriptor on 3.11 and not from 3.12, which left
+  a block live on one of `LatencyRecorder`'s lines and failed its memory test on the
+  oldest supported interpreter only.
 - `import runpy` pulls `threading` on 3.11 and not on 3.12 or 3.13, so an import-cost test
   reported its own probe as a leak.
 
@@ -99,10 +99,11 @@ python -m mypy
 python -m pytest tests -q
 ```
 
-All three must be clean. CI runs exactly these on Python 3.11, 3.12 and 3.13 across
-ubuntu-latest, windows-latest and macos-latest.
+All three must be clean. CI runs exactly these on Python 3.11, 3.12, 3.13 and 3.14 across
+ubuntu-latest, windows-latest and macos-latest, on every push and weekly with nothing
+pushed at all.
 
-That matrix is nine jobs because a real bug here was visible on one of them:
+That matrix is twelve jobs because a real bug here was visible on one of them:
 `time.monotonic()` is backed by `GetTickCount64()` on Windows before CPython 3.13 and steps
 at 15.625 ms, so every latency figure the library reported on that combination was
 quantised to a ~16 ms grid (measured 2026-09-12 on Python 3.11.15, Windows 11, against

@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import gc
 import struct
-import sys
-from typing import Any
+import tracemalloc
+from pathlib import Path
+from typing import Any, Final
 
 import pytest
 
+import aslmp.blocks
 from aslmp.blocks.fields import (
     F32,
     F64,
@@ -434,28 +436,44 @@ def test_signed_and_unsigned_registers_decode_as_declared() -> None:
 # ========================================================================================
 
 
+_BLOCKS: Final = Path(aslmp.blocks.__file__).parent
+
+
 def retained(work: Any, rounds: int) -> int:
-    """Blocks still allocated after ``rounds`` cycles whose results were dropped.
+    """Blocks still live on ``aslmp.blocks``' own lines after ``rounds`` cycles.
 
     The published claim is that the hot path *retains* nothing: each cycle's values are
     freed as the next one replaces them, whatever the block size. Counting live blocks
     rather than total allocations is the honest form of it -- decoding a hundred floats
     necessarily allocates a hundred floats, and the question is whether any of them are
     still there next cycle.
+
+    Filtered to this package's files on purpose. The first version counted every block in
+    the process with ``sys.getallocatedblocks()``, which moves with anything else the
+    interpreter happens to be doing: it read 1 and 1 for small and large in isolation on
+    3.14.6 and then 0 and 1 inside the full suite (2026-09-25), and carried a "re-baseline
+    per Python version" note because it had always been measuring the interpreter along
+    with the decoder. Filtered, it reads 0 on 3.11, 3.13 and 3.14 at every size and length.
     """
-    for _ in range(5):
+    for _ in range(50):
         work()
     gc.collect()
-    before = sys.getallocatedblocks()
-    for _ in range(rounds):
-        work()
-    gc.collect()
-    return sys.getallocatedblocks() - before
+    tracemalloc.start()
+    try:
+        before = tracemalloc.take_snapshot()
+        for _ in range(rounds):
+            work()
+        gc.collect()
+        after = tracemalloc.take_snapshot()
+    finally:
+        tracemalloc.stop()
+    keep = [tracemalloc.Filter(True, str(_BLOCKS / "*"))]
+    diff = after.filter_traces(keep).compare_to(before.filter_traces(keep), "lineno")
+    return sum(d.count_diff for d in diff)
 
 
-@pytest.mark.slow
-def test_decoding_allocates_the_same_whatever_the_block_size() -> None:
-    """Invariant to point count, which is the assertion that catches a regression."""
+def test_decoding_retains_the_same_whatever_the_block_size_or_the_duration() -> None:
+    """Invariant to point count AND to cycle count: the assertion that catches a leak."""
     small = bind(a_client(), numeric_block(4, name="Small4"))
     large = bind(a_client(), numeric_block(100, name="Large100"))
     small_payload = struct.pack("<4H", *range(4))
@@ -467,15 +485,29 @@ def test_decoding_allocates_the_same_whatever_the_block_size() -> None:
     def read_large() -> None:
         cycle(large, large_payload)
 
-    # The published constant: one block still live after 200 cycles, whatever the size.
-    # It is not zero because the interpreter keeps a little of its own between the two
-    # sampling points, and it is deliberately an equality rather than a bound -- a
-    # decoder that grew with the block would move the second number and not the first.
-    # Re-baseline per Python version; this is a CPython implementation detail.
-    small_delta = retained(read_small, 200)
-    large_delta = retained(read_large, 200)
-    assert small_delta == large_delta
-    assert large_delta <= 2
+    # A decoder that kept something per point would move the large figures and not the
+    # small ones; one that kept something per cycle would move the 2 000-cycle figures and
+    # not the 200-cycle ones. Equality across all four catches both, and it needs no
+    # per-interpreter baseline because the interpreter's own blocks are filtered out.
+    figures = {
+        "small x 200": retained(read_small, 200),
+        "small x 2000": retained(read_small, 2000),
+        "large x 200": retained(read_large, 200),
+        "large x 2000": retained(read_large, 2000),
+    }
+    assert len(set(figures.values())) == 1, figures
+
+
+def test_the_retention_check_catches_a_kept_result() -> None:
+    """Keep every decoded block and the count must follow the cycles one for one."""
+    plan = bind(a_client(), numeric_block(100, name="Kept100"))
+    payload = struct.pack("<100H", *range(100))
+    kept: list[object] = []
+
+    def keeps_what_it_decodes() -> None:
+        kept.append(cycle(plan, payload))
+
+    assert retained(keeps_what_it_decodes, 200) >= 200
 
 
 def test_a_bound_plan_holds_no_growing_container() -> None:

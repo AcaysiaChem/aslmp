@@ -22,7 +22,7 @@ import tracemalloc
 from array import array
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 
@@ -408,6 +408,27 @@ def _traced_delta(
     return sum(d.size_diff for d in diff), sum(d.count_diff for d in diff)
 
 
+_PARKED_BY_THE_INTERPRETER: Final = 8
+"""Live blocks the interpreter may keep on our lines while we keep nothing.
+
+Reading an ``array`` slot whose value is past the small-int cache makes a temporary
+``int`` on every CPython, so a recording call allocates and frees a few objects each time
+-- a transient peak of 200 bytes over 2 000 ``record_ns`` calls on 3.11.15, 3.12.13 and
+3.13.14 alike (2026-09-25). "Allocates nothing" was never literally true; "retains
+nothing" is, and that is what these tests assert.
+
+3.11 to 3.13 return a freed temporary to the allocator and ``tracemalloc`` sees nothing
+left. 3.14 keeps some for reuse, and a kept one still counts against the line that first
+allocated it. Which lines, and when, is not deterministic -- one pass left 2 blocks and
+twenty left 3 in the same process -- but the total is bounded by the lines, not by the
+calls: the worst over 15 trials on 3.14.6 was 3 for ``record_ns`` and 4 for ``observe``,
+and the same after 2 000 calls as after 200 000. This is twice that.
+
+A recorder that kept one object per call would leave tens of thousands of blocks here,
+and :func:`test_the_retention_bound_catches_a_kept_result` checks that it would.
+"""
+
+
 def test_the_recorder_owns_no_growable_container() -> None:
     """The structural half of the guarantee: there is nothing here that *can* grow."""
     recorder = LatencyRecorder(capacity=64)
@@ -429,17 +450,19 @@ def test_the_recorder_owns_no_growable_container() -> None:
     } == sizes
 
 
-def test_record_ns_allocates_nothing_after_construction() -> None:
+def test_record_ns_retains_nothing_that_grows_with_use() -> None:
     recorder = LatencyRecorder(capacity=256)
     samples = [4_000_000 + (i % 997) * 1013 for i in range(2000)]
-    for sample in samples:  # warm up: fill the ring, widen every running counter
+    for sample in samples:  # warm up: fill the ring, push every counter past the int cache
         recorder.record_ns(sample)
     ring, buckets, stats = recorder._ring, recorder._buckets, recorder._stats
 
-    # Nothing allocated on any line of ours survives 10 000 more recordings: not a
-    # ring entry, not a histogram bucket, not even a widened running-sum int (which is
-    # why every mutable scalar lives in the preallocated stats block).
-    assert _traced_delta(recorder.record_ns, 5, samples) == (0, 0)
+    # 40 000 more recordings and nothing of ours kept. Every mutable scalar is a machine
+    # integer in a preallocated array, so a ring entry, a histogram bucket or a running
+    # sum has nowhere to be kept; what the interpreter parks is bounded by the lines and
+    # not by the calls -- see _PARKED_BY_THE_INTERPRETER.
+    _size, blocks = _traced_delta(recorder.record_ns, 20, samples)
+    assert blocks <= _PARKED_BY_THE_INTERPRETER, f"{blocks} blocks live after 40 000 calls"
 
     # ... and the buffers are the same objects, still the same size.
     assert recorder._ring is ring
@@ -447,19 +470,39 @@ def test_record_ns_allocates_nothing_after_construction() -> None:
     assert recorder._stats is stats
     assert len(recorder._ring) == 256
     assert recorder.window == 256
-    assert recorder.recorded == 2000 + 5 * len(samples)
+    assert recorder.recorded == 2000 * 21  # warm-up, then twenty passes
 
 
-def test_observe_allocates_nothing_after_construction() -> None:
+def test_observe_retains_nothing_that_grows_with_use() -> None:
     """The whole sink path, including ``wire_ns`` and ``dominant_phase`` in timing.py."""
     recorder = LatencyRecorder(capacity=64)
     transactions = [a_tx(a_timing(wire_ns=4_000_000 + i * 1013)) for i in range(200)]
     for tx in transactions:
         recorder.observe(tx)
 
-    assert _traced_delta(recorder.observe, 5, transactions) == (0, 0)
+    _size, blocks = _traced_delta(recorder.observe, 20, transactions)
+    assert blocks <= _PARKED_BY_THE_INTERPRETER, f"{blocks} blocks live after 4 000 calls"
     assert recorder.window == 64
-    assert recorder.recorded == 200 * 6
+    assert recorder.recorded == 200 * 21  # warm-up, then twenty passes
+
+
+def test_the_retention_bound_catches_a_kept_result() -> None:
+    """The bound is only worth having if a real leak breaks it, so give it one.
+
+    ``samples()`` builds a fresh tuple of 64 ints on a line in observability.py. Keep every
+    one and the count must land two orders of magnitude past the bound, not near it.
+    """
+    recorder = LatencyRecorder(capacity=64)
+    for i in range(200):
+        recorder.record_ns(4_000_000 + i)
+    kept: list[object] = []
+
+    def keeps_what_it_is_given(sample: int) -> None:
+        recorder.record_ns(sample)
+        kept.append(recorder.samples())
+
+    _size, blocks = _traced_delta(keeps_what_it_is_given, 20, range(4_000_000, 4_000_050))
+    assert blocks > 100 * _PARKED_BY_THE_INTERPRETER, blocks
 
 
 def test_the_ring_never_grows_however_many_samples_arrive() -> None:

@@ -13,9 +13,9 @@ What lives here:
 * :class:`EventSink` / :func:`fanout` — where those records go.
 * :class:`Counters` — monotonic tallies owned by the connection.
 * :class:`LatencyRecorder` — a ready-made ``on_transaction`` sink with a fixed ring and
-  a log-linear histogram. **It allocates nothing after construction**: it sits in a
-  control loop, and a sink that grows a list is a sink that eventually pauses the loop
-  it is measuring.
+  a log-linear histogram. **It retains nothing after construction** -- its memory does
+  not grow with use: it sits in a control loop, and a sink that grows a list is a sink
+  that eventually pauses the loop it is measuring.
 * :class:`Percentiles` — exact, from the ring, by a **named** method
   (:data:`PERCENTILE_METHOD`). We publish these numbers; a Mitsubishi engineer must be
   able to recompute them from the same samples and get the same answer.
@@ -686,8 +686,9 @@ class HistogramBucket:
 # ---------------------------------------------------------------------------
 
 # Index of every mutable scalar inside LatencyRecorder's preallocated stats block.
-# They live in an array rather than in attributes so that recording allocates nothing
-# at all — see the class docstring.
+# They live in an array rather than in attributes so that recording keeps nothing: a
+# slot holds a fixed-width machine integer, never an object that widens as a running sum
+# grows. See the class docstring.
 _SUM: Final = 0
 _RECORDED: Final = 1
 _OBSERVED: Final = 2
@@ -705,7 +706,7 @@ _PHASES: Final[tuple[Phase, ...]] = tuple(Phase)
 
 @final
 class LatencyRecorder:
-    """A ready-made ``on_transaction`` sink. **Allocates nothing after construction.**
+    """A ready-made ``on_transaction`` sink. **Retains nothing after construction.**
 
     It keeps two things:
 
@@ -718,13 +719,19 @@ class LatencyRecorder:
     :class:`array.array` blocks of machine integers, written by index. There is no list
     to append to and no dict to grow, and not even the running sum retains a Python int
     that widens as it grows: this object is handed to a control loop, and a sink that
-    allocates is a sink that eventually pauses the loop it is measuring. The only
-    objects created per call are the transient boxed integers of the arithmetic itself,
-    freed the moment the expression ends. ``tests/unit/test_observability.py`` proves
-    it: a :mod:`tracemalloc` diff filtered to this module's own source lines is
-    **exactly zero bytes and zero blocks** across ten thousand recordings, the buffers
-    are the same objects at the same lengths afterwards, and nothing in
-    ``__slots__`` is a growable container.
+    grows is a sink that eventually pauses the loop it is measuring. The only objects
+    created per call are the transient boxed integers of the arithmetic itself, freed the
+    moment the expression ends -- which is why the promise is that it *retains* nothing,
+    not that it allocates nothing.
+
+    ``tests/unit/test_observability.py`` checks it three ways: a :mod:`tracemalloc` diff
+    filtered to this module's own source lines stays within a handful of blocks across
+    forty thousand recordings, the buffers are the same objects at the same lengths
+    afterwards, and nothing in ``__slots__`` is a growable container. The diff is exactly
+    zero on CPython 3.11 to 3.13. 3.14 keeps a few freed temporaries for reuse and still
+    counts them against the line that made them; that is bounded by the number of lines,
+    not the number of calls, and a leak of one object per call would read tens of
+    thousands.
 
     The sink is called by the client **after** ``decoded_at`` is stamped, so time spent
     here cannot contaminate the measurement it is handed.

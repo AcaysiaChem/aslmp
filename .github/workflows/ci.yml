@@ -1,6 +1,6 @@
 # The three checks this project ships under, on every interpreter and every OS it claims.
 #
-# Why the matrix is nine jobs and not one
+# Why the matrix is twelve jobs and not one
 # ---------------------------------------
 # This project shipped a real bug that exactly one cell of this matrix would have caught.
 # `time.monotonic()` is backed by `GetTickCount64()` on Windows before CPython 3.13 and
@@ -26,6 +26,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Weekly, with nothing pushed. The interpreter moves under this project without a commit
+  # to notice it: the Server.wait_closed() change that hung this CI on 2026-09-24 shipped
+  # in a PATCH release (3.12.1), and the runner images pick up patch releases on their
+  # own. A green badge from a month ago says nothing about this week's 3.12.
+  schedule:
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
@@ -45,10 +51,13 @@ jobs:
     # d78ef84: macos/3.12, macos/3.13, ubuntu/3.12 and windows/3.12 hung while
     # windows/3.13 passed the same step in 109 s). Nothing stopped them but that
     # accident. GitHub's default job timeout is 360 minutes, so each of those cells was
-    # entitled to six hours, and a macOS minute bills at ten times a Linux one.
+    # entitled to six hours -- which, while the repository was private, a macOS minute
+    # billed at ten times a Linux one.
     #
-    # Fifteen minutes is roughly seven times the honest run and still bounds a hung
-    # macOS cell to about a dollar instead of twenty-two.
+    # Fifteen minutes is roughly seven times the honest run. Public runners cost nothing
+    # now, and the bound stays for the other reason it was always there: a hang should
+    # end in a failed job with a faulthandler dump in its log, not in a runner held for
+    # six hours and a queue behind it.
     timeout-minutes: 15
     strategy:
       # Never fail fast. The point of the matrix is to see WHICH cells disagree; a
@@ -56,7 +65,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     defaults:
       run:
@@ -70,8 +79,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           # There is nothing to lock -- this package has zero runtime dependencies -- but
-          # the dev extra pulls a toolchain on every one of nine cells, and two of those
-          # runners bill by the minute.
+          # the dev extra pulls the same toolchain on every one of twelve cells, and
+          # there is no reason to fetch it twelve times.
           cache: pip
           cache-dependency-path: pyproject.toml
 

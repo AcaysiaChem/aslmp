@@ -205,7 +205,7 @@ know what your loop costs:
 
 ```python
 recorder = aslmp.LatencyRecorder()          # fixed ring, log-linear histogram,
-plc = aslmp.Plc(..., on_transaction=recorder)   # allocates nothing after construction
+plc = aslmp.Plc(..., on_transaction=recorder)   # retains nothing after construction
 ...
 print(plc.metrics())
 ```
