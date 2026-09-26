@@ -401,22 +401,21 @@ async def _await_probes(plc: Plc, count: int, *, timeout: float = 10.0) -> None:
 
 
 async def test_run_stops_when_the_client_is_closed() -> None:
-    """``run()`` returns once the client reaches CLOSED -- bounded by the probe in flight.
+    """``run()`` returns promptly once the client reaches CLOSED.
 
-    Closing a socket does **not** reliably wake a task already awaiting a read on it: on
-    some loops and platforms the pending ``sock_recv_into`` only unblocks when its own
-    deadline expires. So if ``aclose()`` lands while a probe is mid-flight, the monitor
-    cannot return until that probe gives up, and the bound on this test is the CLIENT's
-    timeout and not the close. The two numbers therefore have to be ordered deliberately:
-    originally both were 2.0 s, so the probe's deadline and the test's patience expired
-    together and whichever won was down to scheduling -- green on windows-latest 3.13, red
-    on ubuntu-latest and on 3.11, CI 2026-09-24.
+    Closing the client wakes a probe caught mid-flight at once -- the transport cancels
+    the parked read before it closes the socket -- so ``run()`` sees CLOSED on its next
+    turn rather than after that probe's own deadline. Until 2026-09-26 it did not on
+    Linux and macOS, where closing a socket alone never wakes a pending read, and this
+    test's patience had to be ordered deliberately against the client's timeout: both
+    were once 2.0 s, and whichever expired first was down to scheduling (CI 2026-09-24).
+    ``tests/unit/test_close_in_flight.py`` now pins the close itself, against a peer that
+    never answers, which is the only way to be sure a probe is in flight when it lands.
 
-    The ordering is now 2 s against 30 s rather than a short client timeout against a long
-    wait. Shortening the client's timeout orders the two just as well but buys it in the
-    wrong currency: a 0.25 s deadline on a loopback round trip is easy for a loaded CI
-    runner to miss, and a missed probe here does not fail the test, it makes the
-    connection ``FAILED`` for good. See :func:`_await_probes`.
+    The client's 2 s timeout stays for the other reason it was chosen: a shorter deadline
+    on a loopback round trip is easy for a loaded runner to miss, and a missed probe here
+    does not fail the test, it makes the connection ``FAILED`` for good. See
+    :func:`_await_probes`.
     """
     async with PlcSimulator() as simulator:
         host, port = simulator.address("tcp")
@@ -428,8 +427,8 @@ async def test_run_stops_when_the_client_is_closed() -> None:
             await _await_probes(plc, 2)
             await plc.aclose()
             assert plc.state is ConnectionState.CLOSED
-            # Comfortably past the 2 s a probe caught mid-flight can still be waiting out.
-            await asyncio.wait_for(task, timeout=30.0)
+            # No longer bounded by a probe's deadline: closing wakes it. Generous anyway.
+            await asyncio.wait_for(task, timeout=5.0)
         finally:
             # An assertion above must not leak a live monitor into the rest of the suite.
             task.cancel()

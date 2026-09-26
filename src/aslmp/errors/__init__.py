@@ -77,6 +77,7 @@ __all__ = [
     "SlmpCapabilityError",
     "SlmpConcurrentTransactionError",
     "SlmpConfigurationError",
+    "SlmpConnectionClosedError",
     "SlmpConnectionEntryBusyError",
     "SlmpConnectionLostError",
     "SlmpConnectionStateError",
@@ -733,6 +734,31 @@ class SlmpNotConnectedError(SlmpTransportError):
 
 class SlmpConnectionLostError(SlmpTransportError):
     """The peer closed or reset an established connection mid-transaction."""
+
+
+class SlmpConnectionClosedError(SlmpConnectionLostError):
+    """This process closed the connection while the transaction was in flight.
+
+    What a caller whose request was waiting receives when ``aclose()`` -- or anything
+    else in this process -- closes the connection under it. It is not a failure of the
+    link: the PLC may have answered perfectly well, and nobody was left to read it. So it
+    is not counted in :class:`~aslmp.observability.Counters`, it emits no
+    :class:`~aslmp.observability.ConnectionFailed`, and the connection ends ``CLOSED``,
+    never ``FAILED`` -- which also means a supervisor does not start reconnecting a client
+    that was shut down on purpose.
+
+    A subclass of :class:`SlmpConnectionLostError`, so every handler already written for a
+    lost connection still catches it; catch this one by name to tell a shutdown you
+    started from a link you lost. For a state-changing command the request had already
+    gone out, so the caller sees :class:`SlmpOutcomeUnknownError` with this as its
+    ``__cause__``, exactly as for any other loss after sending.
+
+    Without it, a close with a read in flight told the caller something false. Measured
+    2026-09-26 against a peer that never answers, with a 5 s timeout: on Linux the read
+    stayed parked for 4.8 s and then raised :class:`SlmpTimeoutError`, blaming a PLC that
+    had not failed to answer anything; on Windows it ended within milliseconds, but as a
+    socket failure. Both counted a failure that had not happened, over TCP and UDP alike.
+    """
 
 
 class SlmpHandshakeError(SlmpTransportError):

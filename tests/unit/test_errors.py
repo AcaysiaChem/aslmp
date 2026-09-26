@@ -227,6 +227,7 @@ NOT_FROM_END_CODES = frozenset(
         "SlmpConnectionEntryBusyError",
         "SlmpNotConnectedError",
         "SlmpConnectionLostError",
+        "SlmpConnectionClosedError",
         "SlmpHandshakeError",
         "SlmpNotSentError",
         "SlmpDatagramSourceError",

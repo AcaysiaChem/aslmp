@@ -63,6 +63,7 @@ from typing import TYPE_CHECKING, Any, Final, final
 from aslmp.errors import (
     SlmpConcurrentTransactionError,
     SlmpConfigurationError,
+    SlmpConnectionClosedError,
     SlmpConnectionLostError,
     SlmpDatagramLostError,
     SlmpDatagramSourceError,
@@ -72,6 +73,7 @@ from aslmp.errors import (
     SlmpTransportError,
 )
 from aslmp.transport.base import (
+    CANCEL_GRACE_S,
     DEFAULT_BUFFER_CAPACITY,
     MAX_UDP_PIPELINE_DEPTH,
     NULL_OBSERVER,
@@ -83,6 +85,7 @@ from aslmp.transport.base import (
     TransportKind,
     TransportObserver,
     WireResult,
+    cancelled_by_close,
     timeout_error,
 )
 
@@ -162,10 +165,12 @@ class UdpTransport:
         "_binding",
         "_buffer",
         "_carries_serial",
+        "_closed_under",
         "_host",
         "_local",
         "_observer",
         "_peer",
+        "_pending",
         "_pipeline_depth",
         "_port",
         "_read_baton",
@@ -212,6 +217,10 @@ class UdpTransport:
         self._port = port
         self._carries_serial = carries_serial
         self._pipeline_depth = pipeline_depth
+        # The read baton means exactly one coroutine is ever parked on the socket; this
+        # is its operation, so close() can wake it. See TcpTransport for the same pair.
+        self._pending: asyncio.Future[Any] | None = None
+        self._closed_under: asyncio.Future[Any] | None = None
         self._source_host = source_host
         self._buffer = RecvBuffer(buffer_capacity)
         self._observer = observer
@@ -344,24 +353,33 @@ class UdpTransport:
         return _addr(infos[0][4])
 
     async def close(self) -> None:
-        """Close the socket and fail every waiter. Idempotent, never raises."""
+        """Close the socket and fail every waiter. Idempotent, never raises.
+
+        Waiters queued behind the read baton are failed directly. The one coroutine
+        actually parked on the socket is cancelled first and allowed to finish
+        cancelling before the socket closes, for the reasons given on
+        :meth:`TcpTransport.close` -- on a selector event loop nothing else wakes it
+        before its deadline.
+        """
         sock = self._sock
         self._sock = None
         for waiter in tuple(self._waiters):
             if not waiter.future.done():
-                waiter.future.set_exception(
-                    SlmpConnectionLostError(
-                        "the UDP socket was closed while this request was in flight; "
-                        "its outcome on the PLC is unknown."
-                    )
-                )
+                waiter.future.set_exception(_closed_in_flight())
                 # Mark it retrieved: the coroutine that owned this waiter may already
                 # have left through its own error path, and an unretrieved exception
                 # would surface later as an asyncio warning about the wrong thing.
                 waiter.future.exception()
         self._waiters.clear()
-        if sock is not None:
-            sock.close()
+        pending = self._pending
+        try:
+            if pending is not None and not pending.done():
+                self._closed_under = pending
+                pending.cancel()
+                await asyncio.wait({pending}, timeout=CANCEL_GRACE_S)
+        finally:
+            if sock is not None:
+                sock.close()
 
     def _rebind(self, *, reason: str) -> None:
         """A fresh source port, so the vanished request's answer lands nowhere.
@@ -583,15 +601,18 @@ class UdpTransport:
             raise self._lost(waiter, deadline)
         sock = self._sock
         if sock is None:
-            raise SlmpConnectionLostError(
-                "the UDP socket was closed while this request was in flight; its "
-                "outcome on the PLC is unknown."
-            )
+            # _rebind swaps the socket synchronously and never leaves it None, so this
+            # is only ever a close() from somewhere in this process.
+            raise _closed_in_flight()
         loop = asyncio.get_running_loop()
+        receive = asyncio.ensure_future(loop.sock_recvfrom(sock, self._buffer.capacity))
+        self._pending = receive
         try:
-            data, source = await asyncio.wait_for(
-                loop.sock_recvfrom(sock, self._buffer.capacity), remaining
-            )
+            data, source = await asyncio.wait_for(receive, remaining)
+        except asyncio.CancelledError:
+            if not cancelled_by_close(receive, self._closed_under):
+                raise
+            raise _closed_in_flight() from None
         except TimeoutError as exc:
             raise self._lost(waiter, deadline) from exc
         except OSError as exc:
@@ -599,6 +620,8 @@ class UdpTransport:
                 f"the UDP socket failed while waiting for a response from "
                 f"{self._peer[0]}:{self._peer[1]}: {exc.__class__.__name__}: {exc}."
             ) from exc
+        finally:
+            self._pending = None
         return data, _addr(source)
 
     def _dispatch(self, data: bytes, source: tuple[str, int]) -> None:
@@ -690,6 +713,15 @@ class UdpTransport:
             f"UdpTransport({self._host!r}, {self._port!r}, "
             f"pipeline_depth={self._pipeline_depth}) [{state}]"
         )
+
+
+
+def _closed_in_flight() -> SlmpConnectionClosedError:
+    return SlmpConnectionClosedError(
+        "the UDP socket was closed by this process while this request was in flight. "
+        "Nothing failed on the link; its outcome on the PLC is unknown because nobody "
+        "was left to read the answer."
+    )
 
 
 def _addr(value: object) -> tuple[str, int]:

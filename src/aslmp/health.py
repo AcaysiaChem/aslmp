@@ -49,7 +49,12 @@ from typing import Final, final
 from aslmp._clock import DEFAULT_CLOCK
 from aslmp.client import Plc
 from aslmp.connection import ConnectionState
-from aslmp.errors import SlmpConfigurationError, SlmpError, SlmpSinkError
+from aslmp.errors import (
+    SlmpConfigurationError,
+    SlmpConnectionClosedError,
+    SlmpError,
+    SlmpSinkError,
+)
 from aslmp.observability import ProbeSkipped
 from aslmp.timing import Clock, Nanos, Transaction
 from aslmp.transport.inflight import TransactionGate
@@ -326,6 +331,11 @@ class HealthMonitor:
         self._client.counters.probes_sent += 1
         try:
             await self._client.self_test()
+        except SlmpConnectionClosedError:
+            # Closed under the probe by this process. That is a shutdown, not an
+            # observation about the link, and recording it would leave the last word of
+            # a cleanly stopped monitor as a failure.
+            return ProbeOutcome.SKIPPED_UNUSABLE
         except SlmpError as exc:
             self._record_failure(f"0x0619 probe failed: {exc.headline()}")
             return ProbeOutcome.FAILED

@@ -52,6 +52,7 @@ from aslmp.errors import (
     NO_DIAGNOSTICS,
     Diagnostics,
     OutcomeUnknownReason,
+    SlmpConnectionClosedError,
     SlmpConnectionEntryBusyError,
     SlmpConnectionLostError,
     SlmpDatagramLostError,
@@ -805,8 +806,13 @@ class Connection:
         """Close on purpose. Idempotent; emits :class:`Disconnected` once."""
         if self._state is ConnectionState.CLOSED:
             return
-        await self._transport.close()
+        # CLOSED before the transport closes, not after. Closing the transport wakes a
+        # transaction parked on the socket, and that transaction's failure path runs
+        # while this await is still pending: it has to find the connection already
+        # CLOSED, or it marks it FAILED and emits ConnectionFailed -- and a supervisor
+        # listening for that starts reconnecting a client that was shut down on purpose.
         self._state = ConnectionState.CLOSED
+        await self._transport.close()
         self._info = None
         self._counters.disconnects += 1
         self._emit(
@@ -879,7 +885,10 @@ class Connection:
         the *next* transaction reads the previous one's bytes as fresh data, and on 3E
         there is no serial No. that would ever reveal it.
         """
-        self._count_failure(exc)
+        if not isinstance(exc, SlmpConnectionClosedError):
+            # A close this process made is not a failure of the link, and counting it as
+            # one puts a timeout or a lost connection in the metrics of a clean shutdown.
+            self._count_failure(exc)
         if not close:
             return
         await self._transport.close()

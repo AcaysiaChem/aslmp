@@ -18,6 +18,31 @@ firmware 1.065** unless another CPU is named.
   change that hung this project's CI on 2026-09-24 shipped in a patch release, and runner
   images pick those up without a commit to trigger anything.
 
+### Added
+
+- `SlmpConnectionClosedError`, a subclass of `SlmpConnectionLostError`: what a transaction
+  in flight raises when this process closes its connection. Catch it by name to tell a
+  shutdown you started from a link you lost; every existing `SlmpConnectionLostError`
+  handler still catches it.
+
+### Fixed
+
+- **Closing a client with a transaction in flight** now ends that transaction at once, as
+  `SlmpConnectionClosedError` -- or, for a state-changing command whose request had already
+  gone out, as `SlmpOutcomeUnknownError` with it as the cause, never as "not sent". It used
+  to leave the transaction parked until its own deadline on Linux and macOS and then raise
+  `SlmpTimeoutError`, blaming a PLC that had not failed to answer anything; on Windows it
+  ended at once, but as a socket failure. Measured 2026-09-26 against a peer that never
+  answers, with a 5 s timeout: 4.8 s on Linux before, under 3 ms after, TCP and UDP alike.
+- A deliberate close is no longer counted as a timeout or a lost connection in `Counters`,
+  and never emits `ConnectionFailed` -- so a `Supervisor` does not start reconnecting a
+  client that was shut down on purpose.
+- A `HealthMonitor` probe cut off by closing its client is a stand-down, not a recorded
+  failure.
+- On Linux and macOS a closing socket's reader is unregistered before its descriptor is
+  released. It used to stay registered until the transaction's deadline, on a number the
+  next socket this process opened could be given.
+
 ### Corrected
 
 - `LatencyRecorder` was described as **allocating nothing after construction**, here in the

@@ -46,9 +46,10 @@ All on **MELSEC iQ-F FX5U-32MT/DS, firmware 1.065**, 2026-09-06/07:
 
 from __future__ import annotations
 
+import asyncio
 import enum
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, Protocol, final
+from typing import TYPE_CHECKING, Any, Final, Protocol, final
 
 from aslmp.errors import (
     SlmpConfigurationError,
@@ -63,6 +64,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from aslmp.timing import TimingBuilder
 
 __all__ = [
+    "CANCEL_GRACE_S",
     "DEFAULT_BUFFER_CAPACITY",
     "DEFAULT_UDP_PIPELINE_DEPTH",
     "MAX_UDP_PIPELINE_DEPTH",
@@ -77,10 +79,35 @@ __all__ = [
     "TransportObserver",
     "WireResult",
     "accept_any",
+    "cancelled_by_close",
     "timeout_error",
 ]
 
 _NS_PER_S: Final = 1_000_000_000
+
+CANCEL_GRACE_S: Final = 1.0
+"""How long ``close()`` waits for a parked read or write to finish cancelling.
+
+Cancelling a pending socket operation completes on the loop's next turn, so this is not
+a figure anything is expected to approach. It exists so that ``close()`` can never hang:
+past it, the socket is closed regardless.
+"""
+
+
+def cancelled_by_close(
+    pending: asyncio.Future[Any], closed_under: asyncio.Future[Any] | None
+) -> bool:
+    """Whether ``pending`` ended because ``close()`` cancelled it, and nothing else did.
+
+    Cancellation always wins. If the task doing the read is itself being cancelled, its
+    caller asked to stop and gets :class:`asyncio.CancelledError`, never an error about
+    the socket: turning a cancellation into an ordinary exception is how a shutdown stops
+    shutting down.
+    """
+    if closed_under is not pending:
+        return False
+    task = asyncio.current_task()
+    return task is None or task.cancelling() == 0
 
 DEFAULT_BUFFER_CAPACITY: Final = 2048
 """Big enough for the largest response this protocol can produce, in one allocation.

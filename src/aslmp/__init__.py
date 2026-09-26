@@ -211,6 +211,9 @@ if TYPE_CHECKING:
         SlmpConfigurationError as SlmpConfigurationError,
     )
     from aslmp.errors import (
+        SlmpConnectionClosedError as SlmpConnectionClosedError,
+    )
+    from aslmp.errors import (
         SlmpConnectionEntryBusyError as SlmpConnectionEntryBusyError,
     )
     from aslmp.errors import (
@@ -814,6 +817,7 @@ _EXPORTS: Final[dict[str, str]] = {
     "SlmpConnectionEntryBusyError": "aslmp.errors",
     "SlmpNotConnectedError": "aslmp.errors",
     "SlmpConnectionLostError": "aslmp.errors",
+    "SlmpConnectionClosedError": "aslmp.errors",
     "SlmpHandshakeError": "aslmp.errors",
     "SlmpNotSentError": "aslmp.errors",
     "SlmpDatagramSourceError": "aslmp.errors",

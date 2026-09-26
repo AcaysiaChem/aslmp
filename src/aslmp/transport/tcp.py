@@ -43,10 +43,11 @@ from __future__ import annotations
 
 import asyncio
 import socket
-from typing import TYPE_CHECKING, Final, final
+from typing import TYPE_CHECKING, Any, Final, final
 
 from aslmp.errors import (
     SlmpConcurrentTransactionError,
+    SlmpConnectionClosedError,
     SlmpConnectionEntryBusyError,
     SlmpConnectionLostError,
     SlmpNotConnectedError,
@@ -55,6 +56,7 @@ from aslmp.errors import (
     SlmpTimeoutError,
 )
 from aslmp.transport.base import (
+    CANCEL_GRACE_S,
     DEFAULT_BUFFER_CAPACITY,
     Binding,
     Correlation,
@@ -64,6 +66,7 @@ from aslmp.transport.base import (
     TransportKind,
     TransportObserver,
     WireResult,
+    cancelled_by_close,
     timeout_error,
 )
 
@@ -122,8 +125,10 @@ class TcpTransport:
         "_binding",
         "_buffer",
         "_busy",
+        "_closed_under",
         "_host",
         "_nodelay",
+        "_pending",
         "_port",
         "_sock",
         "_source",
@@ -148,6 +153,11 @@ class TcpTransport:
         self._binding: Binding | None = None
         self._busy = False
         self._transactions_completed = 0
+        # The one socket operation that can be parked at a time, so close() can wake it,
+        # and which one close() cancelled, so the parked coroutine can tell that apart
+        # from its own caller cancelling it.
+        self._pending: asyncio.Future[Any] | None = None
+        self._closed_under: asyncio.Future[Any] | None = None
 
     # -- identity ------------------------------------------------------------
 
@@ -315,12 +325,29 @@ class TcpTransport:
         )
 
     async def close(self) -> None:
-        """Close the socket. Idempotent, never raises, never half-closes."""
+        """Close the socket. Idempotent, never raises, never half-closes.
+
+        A read or write parked on the socket is cancelled FIRST, allowed to finish
+        cancelling, and only then is the socket closed. Its caller gets
+        :class:`~aslmp.errors.SlmpConnectionClosedError` at once rather than a timeout at
+        its deadline -- on a selector event loop (Linux, macOS) closing the socket alone
+        does not wake a pending read at all. And the order is not cosmetic there: the
+        cancellation is what unregisters the socket's reader, and a descriptor closed
+        with its reader still registered is a number the next socket this process opens
+        can be handed.
+        """
         sock = self._sock
         self._sock = None
         self._busy = False
-        if sock is not None:
-            sock.close()
+        pending = self._pending
+        try:
+            if pending is not None and not pending.done():
+                self._closed_under = pending
+                pending.cancel()
+                await asyncio.wait({pending}, timeout=CANCEL_GRACE_S)
+        finally:
+            if sock is not None:
+                sock.close()
 
     # -- the one operation that touches the wire -----------------------------
 
@@ -436,8 +463,19 @@ class TcpTransport:
                 where=f"sending the request ({first} of {total} bytes written)",
             )
         loop = asyncio.get_running_loop()
+        write = asyncio.ensure_future(loop.sock_sendall(sock, payload[first:]))
+        self._pending = write
         try:
-            await asyncio.wait_for(loop.sock_sendall(sock, payload[first:]), remaining)
+            await asyncio.wait_for(write, remaining)
+        except asyncio.CancelledError:
+            if not cancelled_by_close(write, self._closed_under):
+                raise
+            raise SlmpConnectionClosedError(
+                f"the connection to {self._host}:{self._port} was closed by this process "
+                f"while the request was being written ({first} of {total} bytes had "
+                f"already gone out). Part of it may have reached the PLC, so the outcome "
+                f"of a state-changing command is unknown."
+            ) from None
         except TimeoutError as exc:
             raise timeout_error(
                 deadline=deadline,
@@ -454,6 +492,8 @@ class TcpTransport:
                 f"{exc.__class__.__name__}: {exc}. Part of the request may have reached "
                 f"the PLC, so the outcome of a state-changing command is unknown."
             ) from exc
+        finally:
+            self._pending = None
         return total
 
     async def _read_message(
@@ -467,13 +507,23 @@ class TcpTransport:
         loop = asyncio.get_running_loop()
         received = 0
         while reassembler.bytes_needed:
+            if self._sock is None:
+                # Closed between two reads of one message: nothing was parked for close()
+                # to cancel, and the socket this loop holds is already shut.
+                raise self._closed(received)
             wanted = reassembler.bytes_needed
             window = self._buffer.window(wanted)
             remaining = deadline.remaining_s()
             if remaining <= 0.0:
                 raise self._timeout(deadline, received)
+            read = asyncio.ensure_future(loop.sock_recv_into(sock, window))
+            self._pending = read
             try:
-                nbytes = await asyncio.wait_for(loop.sock_recv_into(sock, window), remaining)
+                nbytes = await asyncio.wait_for(read, remaining)
+            except asyncio.CancelledError:
+                if not cancelled_by_close(read, self._closed_under):
+                    raise
+                raise self._closed(received) from None
             except TimeoutError as exc:
                 raise self._timeout(deadline, received) from exc
             except ConnectionResetError as exc:
@@ -492,6 +542,8 @@ class TcpTransport:
                     f"{exc.__class__.__name__}: {exc}. The response is incomplete and "
                     f"this library never invents the rest of it."
                 ) from exc
+            finally:
+                self._pending = None
             if nbytes == 0:
                 raise self._eof(received)
             # A read that came back short of what it asked for is the only honest
@@ -501,6 +553,13 @@ class TcpTransport:
             received += nbytes
             reassembler.feed(bytes(window[:nbytes]))
         return received
+
+    def _closed(self, received: int) -> SlmpConnectionClosedError:
+        return SlmpConnectionClosedError(
+            f"the connection to {self._host}:{self._port} was closed by this process while "
+            f"the response was being read ({received} byte(s) of it had arrived). Nothing "
+            f"failed on the link; nobody was left to read the answer."
+        )
 
     def _timeout(self, deadline: Deadline, received: int) -> SlmpTimeoutError:
         return timeout_error(
