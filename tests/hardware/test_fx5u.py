@@ -54,7 +54,8 @@ import socket  # noqa: TID251 - the raw-socket control must share no code with t
 import statistics
 import struct
 import time
-from collections.abc import AsyncIterator, Sequence
+import warnings
+from collections.abc import AsyncIterator, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -79,7 +80,9 @@ from aslmp import (
     plc_block,
     word,
 )
+from aslmp.errors.endcodes import END_CODES
 from aslmp.profile import Family
+from aslmp.sync import Plc as SyncPlc
 
 HOST = os.environ.get("ASLMP_TEST_HOST")
 TCP_PORT = int(os.environ.get("ASLMP_TEST_TCP_PORT", "5002"))
@@ -152,6 +155,50 @@ async def bench(port: int = TCP_PORT, **kwargs: Any) -> AsyncIterator[Plc]:
     plc = Plc(HOST, port, profile=PROFILE, **kwargs)
     async with plc:
         yield plc
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _leave_the_error_flag_as_this_module_found_it() -> Iterator[None]:
+    """Clear the error this module provokes, and nothing it did not.
+
+    Tests here provoke end codes on purpose -- 0xC056 and 0xC052 among them -- and the
+    bench FX5U records an SLMP request answered with an error end code as its own latest
+    self-diagnostic error: SM0 on, SD0 the end code, the ERR indication lit. Two runs on
+    2026-09-27 each left SD0 = 0xC052 stamped during the run. Every run before them had
+    done the same, unseen, because nothing could look until ``aslmp status`` existed.
+
+    So the flag is noted before the module and, afterwards, cleared only when it was off
+    before, is on now, and holds a code this library knows as an SLMP end code. A fault
+    that predates the run, or a code that is not an end code, is left exactly where it is
+    and reported: clearing a real fault's flag hides it. Clear Error (0x1617) is a write,
+    approved by the bench owner for this use on 2026-09-27. Synchronous on purpose, so a
+    module-scoped fixture needs no module-scoped event loop.
+    """
+    assert HOST is not None
+    with SyncPlc(HOST, TCP_PORT, profile=PROFILE) as plc:
+        before = plc.read_diagnostics()
+    yield
+    with SyncPlc(HOST, TCP_PORT, profile=PROFILE) as plc:
+        after = plc.read_diagnostics()
+        if not after.error:
+            return
+        if before.error:
+            warnings.warn(
+                f"the bench was already reporting 0x{before.error_code:04X} before this "
+                f"module ran, so its error flag is left alone (now 0x{after.error_code:04X})",
+                stacklevel=1,
+            )
+            return
+        if after.error_code not in END_CODES:
+            warnings.warn(
+                f"the bench is reporting 0x{after.error_code:04X}, which is not an SLMP end "
+                f"code this module could have provoked; its error flag is left alone",
+                stacklevel=1,
+            )
+            return
+        plc.clear_error()
+        cleared = plc.read_diagnostics()
+    assert not cleared.error, f"Clear Error left SM0 on, SD0 = 0x{cleared.error_code:04X}"
 
 
 # ========================================================================================

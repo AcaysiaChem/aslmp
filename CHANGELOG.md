@@ -7,6 +7,18 @@ carry two minor versions' notice, and nothing is removed in a minor release.
 Dates are the date the work landed. Hardware statements mean **MELSEC iQ-F FX5U-32MT/DS,
 firmware 1.065** unless another CPU is named.
 
+## Unreleased
+
+- The hardware suite leaves the bench's error flag as it found it. Its tests provoke end
+  codes on purpose, and the FX5U records an SLMP request answered with an error end code as
+  its own self-diagnostic error, so every run had been leaving the CPU's ERR indication lit
+  -- invisible until `aslmp status`. It now clears the flag afterwards only when it was off
+  before, is on now, and holds a known SLMP end code; a fault that predates the run is left
+  alone and reported. Verified on the bench: two runs without it left `SD0 = 0xC052`, the
+  run with it left the flag off.
+- The diagnostics measurement record adds what Clear Error does on this CPU: SM0 off and
+  SD0-SD7 zeroed together, the CPU staying in RUN.
+
 ## 0.2.0 — 2026-09-27
 
 ### Supported interpreters
