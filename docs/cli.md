@@ -1,6 +1,6 @@
 # The `aslmp` command line
 
-One console script, eleven subcommands. `aslmp --help` lists them; `aslmp <cmd> --help` explains
+One console script, twelve subcommands. `aslmp --help` lists them; `aslmp <cmd> --help` explains
 one.
 
 **Subcommands are imported lazily and that is tested.** `aslmp --help` does not import
@@ -90,9 +90,17 @@ same CPU healthy, correctly: nothing was wrong with the connection. "0 s before 
 the useful part -- a fault stamped just now is one that is still happening.
 
 The error's age is measured between two readings of the PLC's own clock taken in the same
-transaction, so it is right even when that clock was never set. aslmp has no table of
+transaction, so it is right even when that clock was never set -- provided nobody changed the
+clock in between. Set it back after a fault and `status` says the age cannot be told; set it
+forward and the age grows by the change, which nothing can detect. aslmp has no table of
 self-diagnostic codes and prints none; GX Works3 names the code under
 **Diagnostics -> Module Diagnostics**.
+
+An error flag is not always a fault in the CPU. On the bench FX5U an SLMP request answered with
+an error end code sets it too: a hardware-suite run that provokes `0xC052` left SM0 on and
+`SD0 = 0xC052` (2026-09-27). When SD0 holds a code aslmp knows as an SLMP end code, `status`
+says so and points at `aslmp cite --end-code`, rather than sending you to look for a hardware
+fault that is really somebody's request.
 
 The register layout was measured on an iQ-F CPU. On any other family `status` reads only the
 operating state (`SD203`) and says so, rather than assume the other registers sit in the same

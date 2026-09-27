@@ -12,6 +12,11 @@ reads that can disagree about a CPU that changed between them. The layout was me
 on an iQ-F CPU (:data:`aslmp.identity.CPU_DIAGNOSTICS_MEASURED`); on any other family
 only the operating state is read, and the output says why.
 
+An error flag is not always a fault in the CPU. On the bench FX5U an SLMP request
+answered with an error end code sets it too (2026-09-27), so when SD0 holds a code this
+library knows as an SLMP end code, the output says so -- otherwise a bad request from some
+client reads exactly like a hardware fault.
+
 Read-only. It never clears an error: ``clear_error`` is a write, and a fault that
 persists comes straight back.
 """
@@ -40,6 +45,13 @@ read 1980-01-22 on 2026-09-26."""
 _NO_MEANING = """
 aslmp has no table of self-diagnostic codes and does not guess what 0x{code:04X} means.
 GX Works3 names it under Diagnostics -> Module Diagnostics.
+"""
+
+_ALSO_AN_END_CODE = """
+0x{code:04X} is also an SLMP end code: {description}
+The bench FX5U records an SLMP request answered with an error end code here as well, so
+this may be a request some client sent rather than a fault in the CPU.
+`aslmp cite --end-code 0x{code:04X}` has the detail.
 """
 
 
@@ -115,15 +127,33 @@ def run(argv: Sequence[str]) -> int:
                 )
                 stamped = f"{_when(found.error_at)} by the PLC's clock"
                 age = found.error_age_s
-                if age is not None:
+                if age is not None and age >= 0:
                     stamped += f", {age:.0f} s before this read"
+                elif age is not None:
+                    # Stamped after the clock reading taken with it: the clock was set
+                    # back since. Printing "-3600 s before this read" would be nonsense.
+                    stamped += (
+                        " -- later than the clock now reads, so the clock has been set "
+                        "back since and the age cannot be told"
+                    )
                 rows.append(["stamped", stamped])
             else:
                 rows.append(["error", "none -- SM0 is OFF"])
             rows.append(["clock", _clock_line(found.clock)])
             print(columns(rows))
             if found.error:
-                print(_NO_MEANING.format(code=found.error_code), end="")
+                from aslmp.errors.endcodes import END_CODES
+
+                known = END_CODES.get(found.error_code)
+                if known is None:
+                    print(_NO_MEANING.format(code=found.error_code), end="")
+                else:
+                    print(
+                        _ALSO_AN_END_CODE.format(
+                            code=found.error_code, description=known.description
+                        ),
+                        end="",
+                    )
         return EXIT_OK
 
     return guarded(body)

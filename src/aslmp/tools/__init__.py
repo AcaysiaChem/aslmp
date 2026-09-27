@@ -9,7 +9,7 @@ uninstalled by whoever maintains that PC.
 :mod:`aslmp.tools.__main__` are the only ones that run for ``aslmp --help``, and neither
 imports ``asyncio``, ``socket`` or anything above layer 1. The help text below is a
 table of strings for exactly that reason: an ``argparse`` subparser tree would have to
-import all eleven modules -- and therefore the client, the transport and the simulator --
+import all twelve modules -- and therefore the client, the transport and the simulator --
 to render one screen of text.
 
 Each subcommand module exports ``run(argv) -> int`` and ``build_parser() ->

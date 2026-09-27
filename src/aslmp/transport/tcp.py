@@ -56,7 +56,6 @@ from aslmp.errors import (
     SlmpTimeoutError,
 )
 from aslmp.transport.base import (
-    CANCEL_GRACE_S,
     DEFAULT_BUFFER_CAPACITY,
     Binding,
     Correlation,
@@ -67,6 +66,7 @@ from aslmp.transport.base import (
     TransportObserver,
     WireResult,
     cancelled_by_close,
+    close_when_cancelled,
     timeout_error,
 )
 
@@ -327,27 +327,25 @@ class TcpTransport:
     async def close(self) -> None:
         """Close the socket. Idempotent, never raises, never half-closes.
 
-        A read or write parked on the socket is cancelled FIRST, allowed to finish
-        cancelling, and only then is the socket closed. Its caller gets
+        A read or write parked on the socket is cancelled, and the socket is closed once
+        that cancellation has landed. Its caller gets
         :class:`~aslmp.errors.SlmpConnectionClosedError` at once rather than a timeout at
         its deadline -- on a selector event loop (Linux, macOS) closing the socket alone
-        does not wake a pending read at all. And the order is not cosmetic there: the
-        cancellation is what unregisters the socket's reader, and a descriptor closed
-        with its reader still registered is a number the next socket this process opens
-        can be handed.
+        does not wake a pending read at all. This method itself never suspends; see
+        :func:`~aslmp.transport.base.close_when_cancelled` for why that matters.
         """
         sock = self._sock
         self._sock = None
         self._busy = False
         pending = self._pending
-        try:
-            if pending is not None and not pending.done():
-                self._closed_under = pending
-                pending.cancel()
-                await asyncio.wait({pending}, timeout=CANCEL_GRACE_S)
-        finally:
+        if pending is not None and not pending.done():
+            self._closed_under = pending
             if sock is not None:
-                sock.close()
+                close_when_cancelled(pending, sock)
+            else:
+                pending.cancel()
+        elif sock is not None:
+            sock.close()
 
     # -- the one operation that touches the wire -----------------------------
 
@@ -557,8 +555,9 @@ class TcpTransport:
     def _closed(self, received: int) -> SlmpConnectionClosedError:
         return SlmpConnectionClosedError(
             f"the connection to {self._host}:{self._port} was closed by this process while "
-            f"the response was being read ({received} byte(s) of it had arrived). Nothing "
-            f"failed on the link; nobody was left to read the answer."
+            f"the response was being read ({received} byte(s) of it had arrived): by "
+            f"aclose(), or because another transaction on this connection failed, in which "
+            f"case its ConnectionFailed event names that failure."
         )
 
     def _timeout(self, deadline: Deadline, received: int) -> SlmpTimeoutError:

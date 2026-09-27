@@ -128,7 +128,7 @@ def decode_cpu_status(words: tuple[int, ...]) -> CpuStatus:
 CPU_DIAGNOSTICS_MEASURED: Final = Measurement(
     cpu="FX5U-32MT/DS",
     firmware="1.065",
-    date="2026-09-26",
+    date="2026-09-27",
     host="192.168.10.41 (the development box)",
     note=(
         "The layout decode_cpu_diagnostics reads, observed rather than read out of a "
@@ -138,9 +138,16 @@ CPU_DIAGNOSTICS_MEASURED: Final = Measurement(
         "each a plain binary word; SD203 = 0 (RUN); SD210-SD216 = the clock, in the same "
         "order and coding. First read word by word on 2026-09-25, when SD1-SD7 tracked "
         "SD210-SD216 to within a second across three reads eight seconds apart: a fault "
-        "that persists is re-stamped continuously. Measured on this one CPU and applied "
-        "to the iQ-F family, as SD203 already is; no other family has been measured, "
-        "and read_diagnostics refuses them rather than assume the layout carries over."
+        "that persists is re-stamped continuously. On 2026-09-27, with the module "
+        "powered again, SM0 and SM1 were OFF and SD0-SD7 all read zero; whether the "
+        "error cleared itself or was cleared in GX Works3 was not observed. Minutes "
+        "later a hardware-suite run that provokes SLMP end code 0xC052 left SM0 ON and "
+        "SD0 = 0xC052, stamped during the run and not re-stamped after it: on this CPU "
+        "an SLMP request answered with an error end code is recorded as its latest "
+        "self-diagnostic error too, and it was still set a minute later. Measured on "
+        "this one CPU and applied to the iQ-F family, as SD203 already is; no other "
+        "family has been measured, and read_diagnostics refuses them rather than "
+        "assume the layout carries over."
     ),
 )
 """Where the diagnostic register layout comes from: silicon, not a manual."""
@@ -164,15 +171,22 @@ class CpuDiagnostics:
     about a CPU that stopped in between. Asking the questions separately is also five
     round trips instead of one.
 
-    ``error`` is SM0. ``error_code`` is SD0 exactly as read. This library has no table of
-    self-diagnostic codes and does not guess what one means -- GX Works3's module
-    diagnostics names it. ``error_at`` and ``clock`` are ``None`` when their registers do
+    ``error`` is SM0. ``error_code`` is SD0 exactly as read: 0 when there is no error, and
+    not necessarily a fault in the CPU at all -- on the bench FX5U an SLMP request answered
+    with an error end code is recorded here too, so a client's bad request lights the same
+    flag a hardware fault does. This library has no table of the CPU's own
+    self-diagnostic codes and does not guess what one means; GX Works3's module
+    diagnostics names it. When SD0 holds a code this library knows as an SLMP end code,
+    ``aslmp status`` says so. ``error_at`` and ``clock`` are ``None`` when their registers do
     not form a real date, rather than a date made up to fill the field.
 
     Both times come from the PLC's own clock, which need not be right: the bench FX5U's
     read 1980-01-22 on 2026-09-26, evidently never set. :attr:`error_age_s` is therefore
     the difference between two readings of that clock taken in the same transaction, so
-    it is right even when the date is not, and it never involves this host's clock.
+    it is right even when the date is not, and it never involves this host's clock --
+    provided nobody changed the clock between the fault and the read. Set it back and the
+    age goes negative, which ``aslmp status`` reports as untellable; set it forward and
+    the age grows by the change, which nothing here can detect.
     """
 
     status: CpuStatus
@@ -183,7 +197,10 @@ class CpuDiagnostics:
 
     @property
     def error_age_s(self) -> float | None:
-        """Seconds from the latest error's stamp to the clock, both by the PLC's clock."""
+        """Seconds from the latest error's stamp to the clock, both by the PLC's clock.
+
+        Negative if the clock was set back after the stamp. See the class docstring.
+        """
         if self.error_at is None or self.clock is None:
             return None
         return (self.clock - self.error_at).total_seconds()
@@ -210,9 +227,15 @@ def decode_cpu_diagnostics(values: Sequence[object]) -> CpuDiagnostics:
             f"a diagnostic snapshot is {_SNAPSHOT_POINTS} word points; got {len(values)}"
         )
     flags = values[0]
-    if not isinstance(flags, tuple) or not flags:
+    if (
+        not isinstance(flags, tuple)
+        or len(flags) != 16
+        or not all(isinstance(flag, bool) for flag in flags)
+    ):
+        # Exactly sixteen booleans, because that is what a bits-kind word point decodes
+        # to. "Non-empty" let (2,) through as error=True with bit 0 clear.
         raise SlmpPayloadShapeError(
-            f"SM0 was read as a packed word of flags; got {flags!r}"
+            f"SM0 is read as one word of sixteen flags, SM0-SM15; got {flags!r}"
         )
     words: list[int] = []
     for position, value in enumerate(values[1:], start=1):

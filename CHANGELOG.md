@@ -26,9 +26,15 @@ firmware 1.065** unless another CPU is named.
   2026-09-25 the bench FX5U probed perfectly healthy while it ran with an error raised
   continuously for a module left unpowered; nothing short of reading special registers by
   hand could say so. The error's age is taken between two readings of the PLC's own clock,
-  so it is right even on a clock that was never set. iQ-F only -- the register layout was
+  so it is right even on a clock that was never set, as long as nobody changes the clock
+  between the fault and the read. iQ-F only -- the register layout was
   measured on an FX5U and is not assumed for other families, where `status` reads `SD203`
   alone and says why. `CpuDiagnostics` is the result type.
+  An error flag is not always a CPU fault: on the bench FX5U an SLMP request answered with an
+  error end code sets it too (measured 2026-09-27 -- a hardware-suite run left `SD0 = 0xC052`,
+  the end code it provokes), so when SD0 holds a known end code, `status` says so.
+- `Transaction.abandoned` and `Counters.transactions_abandoned`: a transaction cut off by
+  this process closing its connection, told apart from one that failed.
 - `SlmpConnectionClosedError`, a subclass of `SlmpConnectionLostError`: what a transaction
   in flight raises when this process closes its connection. Catch it by name to tell a
   shutdown you started from a link you lost; every existing `SlmpConnectionLostError`
@@ -43,9 +49,26 @@ firmware 1.065** unless another CPU is named.
   `SlmpTimeoutError`, blaming a PLC that had not failed to answer anything; on Windows it
   ended at once, but as a socket failure. Measured 2026-09-26 against a peer that never
   answers, with a 5 s timeout: 4.8 s on Linux before, under 3 ms after, TCP and UDP alike.
-- A deliberate close is no longer counted as a timeout or a lost connection in `Counters`,
-  and never emits `ConnectionFailed` -- so a `Supervisor` does not start reconnecting a
-  client that was shut down on purpose.
+- A deliberate close is not counted as a failure: the transaction it cut off is recorded
+  with `Transaction.abandoned` set and counted in the new `Counters.transactions_abandoned`,
+  not in `transactions_failed`, `timeouts` or `connection_lost`, and no `ConnectionFailed` is
+  emitted -- so a `Supervisor` does not start reconnecting a client that was shut down on
+  purpose, and a `HealthMonitor` fed from `on_transaction` ignores it.
+- `close()` never suspends. It cancels the parked operation and closes the socket from that
+  operation's done-callback. A first version awaited the cancellation instead, and review
+  before release found that await was a suspension point inside every close: a caller
+  cancelled there never got `Disconnected`, and a failing pipelined transaction closing the
+  connection there let a sibling's close claim the failure, so `ConnectionFailed` named the
+  wrong cause.
+- `aclose()` during `connect()` stays closed. It used to be undone: the socket finished
+  opening, the state went back to `OPEN`, and the client handshook its way to `READY` --
+  holding the PLC's single TCP slot on that entry -- after its owner closed it. `connect()`
+  now raises `SlmpConnectionClosedError`. Predates 0.2.0; found by the same review.
+- Pipelined UDP no longer leaks its read lock when a waiter is cancelled just after the lock
+  was granted, which left every pipelined exchange after it -- a reconnect's handshake
+  included -- waiting out its deadline against a peer answering at once. Each binding also
+  gets a fresh lock, so nothing from a previous socket's life can stall a reconnect.
+  Predates 0.2.0; found by the same review.
 - A `HealthMonitor` probe cut off by closing its client is a stand-down, not a recorded
   failure.
 - On Linux and macOS a closing socket's reader is unregistered before its descriptor is

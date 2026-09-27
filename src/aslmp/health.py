@@ -298,6 +298,11 @@ class HealthMonitor:
         """
         if tx.command == PROBE_COMMAND:
             return
+        if tx.abandoned:
+            # Cut off by this process closing the connection. That is a shutdown or the
+            # aftermath of another transaction's failure, which is observed on its own
+            # record; this one says nothing about the link.
+            return
         received = tx.timing.received_at
         self._last_activity_at = received if received is not None else Nanos(self._clock())
         if tx.ok and tx.timing.is_complete:

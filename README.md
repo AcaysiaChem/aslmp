@@ -48,7 +48,7 @@ asyncio.run(main())
 ```
 
 There is a synchronous facade (`aslmp.sync.Plc`) with the same method names and one background
-event loop for its lifetime, and a command line with eleven subcommands behind one entry point.
+event loop for its lifetime, and a command line with twelve subcommands behind one entry point.
 
 ---
 
@@ -258,7 +258,9 @@ aslmp status   192.168.10.250 --port 5002 --profile melsec:iq-f/fx5u
 ```
 
 `status` answers the question `probe` does not: whether the CPU is running and whether it is
-reporting an error. A healthy connection to a CPU with an active fault probes perfectly.
+reporting an error. A healthy connection to a CPU with an active fault probes perfectly. The
+error half is iQ-F only for now -- its registers were measured on an FX5U -- and other families
+get the running state alone.
 
 `identify` needs no profile: `0x0619` and `0x0101` carry no device address, so the profile
 cannot change a byte of them. `probe` proves the entry is free, the data code matches, the
@@ -607,7 +609,7 @@ One console script, twelve subcommands, each imported lazily — `aslmp --help` 
 ```
 aslmp identify 192.168.10.250                        what CPU is that, and which profile?
 aslmp probe    HOST --profile KEY                    prove the entry is live, and say what that proves
-aslmp status   HOST --profile KEY                    the CPU's state, and whether it reports an error
+aslmp status   HOST --profile KEY                    the CPU's state, and on iQ-F whether it reports an error
 aslmp read     HOST D0 --as f32 --profile KEY        one typed read
 aslmp write    HOST D100 1.25 --as f32 --verify      device memory only
 aslmp cite     0x0403                                the manual sections behind a command

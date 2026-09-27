@@ -169,7 +169,7 @@ def add_connection_arguments(
         # NOT "TCP wins the latency tail". That was measured over Wi-Fi, published as a
         # property of SLMP, and withdrawn on 2026-09-07 when a wired retest put UDP ahead
         # at every percentile; aslmp.client.TRANSPORT_CHOICE carries the correction. This
-        # string is printed by five of the eleven subcommands, so it outlived the claim in
+        # string is printed by six of the twelve subcommands, so it outlived the claim in
         # the one place a user actually reads.
         help=(
             "the entry's protocol (default: tcp, for configurability rather than speed: "

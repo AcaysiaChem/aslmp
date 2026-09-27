@@ -4,7 +4,7 @@ Hand-rolled rather than ``argparse`` subparsers, for one measured reason: buildi
 subparser tree requires importing every subcommand module to ask it for its arguments,
 and importing ``aslmp.tools.read`` imports ``aslmp.client``, which imports
 ``aslmp.transport``, which imports ``socket``. ``aslmp --help`` would then pay for the
-event loop, the socket module and the simulator in order to print eleven lines of text.
+event loop, the socket module and the simulator in order to print twelve lines of text.
 ``tests/unit/test_tools.py`` asserts in a subprocess that it does not.
 
 The split is therefore: this module owns the subcommand *name*, and the subcommand

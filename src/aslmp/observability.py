@@ -402,6 +402,14 @@ class Counters:
     the expected outcome — that is ``transactions_answerless``, and booking it here is
     the bug this counter was carrying: a successful ``0x1006`` Remote Reset moved
     ``started`` and ``failed`` together and left ``completed`` behind."""
+    transactions_abandoned: int = 0
+    """Cut off because this process closed the connection before the answer arrived.
+
+    Not a failure of this transaction. Its record says ``abandoned=True``; see
+    :class:`~aslmp.errors.SlmpConnectionClosedError`. Kept apart from
+    ``transactions_failed`` so that a clean shutdown with a read in flight does not
+    report a failed transaction on every restart.
+    """
     transactions_answerless: int = 0
     """Sent, answered by nothing, and nothing was the right answer.
 
@@ -502,6 +510,8 @@ class Counters:
             self.segmented_responses += 1
         if tx.timing.is_complete:
             self.transactions_completed += 1
+        elif tx.abandoned:
+            self.transactions_abandoned += 1
         elif not tx.timing.chunks and tx.command in answerless_commands():
             self.transactions_answerless += 1
         else:

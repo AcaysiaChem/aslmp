@@ -548,6 +548,16 @@ class Transaction:
     plc_clock: int | None = None
     request_frame: bytes | None = None
     response_frame: bytes | None = None
+    abandoned: bool = False
+    """This process closed the connection before the answer arrived.
+
+    By ``aclose()``, or because another transaction on the same connection failed. The
+    timing alone cannot say so: an abandoned read and a read that timed out produce the
+    same :class:`TransactionTiming` -- sent, nothing received, no ``decoded_at``. Without
+    this field every clean shutdown with a read in flight was booked as a failed
+    transaction, and a :class:`~aslmp.health.HealthMonitor` wired to ``on_transaction``
+    ended on a recorded failure.
+    """
 
     @property
     def ok(self) -> bool:

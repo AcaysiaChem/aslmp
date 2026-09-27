@@ -62,7 +62,7 @@ def test_the_error_age_comes_from_the_plc_clock_not_this_host() -> None:
 def test_registers_that_are_not_a_date_decode_to_none_not_to_a_made_up_one() -> None:
     no_error_yet = list(BENCH_2026_09_26)
     no_error_yet[0] = _FLAGS_OFF
-    no_error_yet[1:9] = [0] * 8  # nothing stamped: year 0, month 0
+    no_error_yet[1:9] = [0] * 8  # what the bench read once its fault had cleared
     found = decode_cpu_diagnostics(no_error_yet)
     assert found.error is False
     assert found.error_at is None
@@ -86,10 +86,11 @@ def test_a_clock_that_names_no_moment_is_none(
 def test_a_snapshot_of_the_wrong_shape_is_refused() -> None:
     with pytest.raises(SlmpPayloadShapeError, match="17 word points"):
         decode_cpu_diagnostics(BENCH_2026_09_26[:-1])
-    flags_as_word = list(BENCH_2026_09_26)
-    flags_as_word[0] = 3
-    with pytest.raises(SlmpPayloadShapeError, match="SM0"):
-        decode_cpu_diagnostics(flags_as_word)
+    for bad_flags in (3, (2,), ("False",), (True,) * 15, (1,) * 16):
+        wrong = list(BENCH_2026_09_26)
+        wrong[0] = bad_flags
+        with pytest.raises(SlmpPayloadShapeError, match="sixteen flags"):
+            decode_cpu_diagnostics(wrong)
     a_bool_for_a_word = list(BENCH_2026_09_26)
     a_bool_for_a_word[1] = True
     with pytest.raises(SlmpPayloadShapeError, match="point 1"):
@@ -179,3 +180,36 @@ async def test_aslmp_status_on_another_family_reads_the_state_and_says_why_only_
     assert code == 0, out
     assert "SD203" in out
     assert "measured on an iQ-F CPU only" in out
+
+
+async def test_aslmp_status_says_when_the_error_is_an_slmp_end_code() -> None:
+    """A client's bad request lights the flag a hardware fault does; the output says which.
+
+    On 2026-09-27 a hardware-suite run that provokes end code 0xC052 left the bench FX5U
+    with SM0 ON and SD0 = 0xC052. Printed as "no table, does not guess", that sends a
+    reader to GX Works3 looking for a fault in a CPU that has none.
+    """
+    async with PlcSimulator() as simulator:
+        simulator.memory.write_bits("SM", 0, [True, True])
+        simulator.memory.write_words("SD", 0, [0xC052, 1980, 1, 23, 11, 37, 21, 3])
+        simulator.memory.write_words("SD", 210, [1980, 1, 23, 11, 38, 23, 3])
+        code, out = await _status(simulator.address("tcp")[1], "melsec:iq-f/fx5u")
+    assert code == 0, out
+    assert "0xC052 is also an SLMP end code" in out
+    assert "outside the allowable range" in out
+    assert "aslmp cite --end-code 0xC052" in out
+    assert "does not guess" not in out
+    assert "62 s before this read" in out
+
+
+async def test_aslmp_status_does_not_print_a_negative_age() -> None:
+    """A clock set back after the fault makes the stamp later than the clock."""
+    async with PlcSimulator() as simulator:
+        simulator.memory.write_bits("SM", 0, [True, True])
+        simulator.memory.write_words("SD", 0, [0x3081, 2026, 9, 27, 12, 0, 0, 0])
+        simulator.memory.write_words("SD", 210, [2026, 9, 27, 11, 0, 0, 0])
+        code, out = await _status(simulator.address("tcp")[1], "melsec:iq-f/fx5u")
+    assert code == 0, out
+    assert "cannot be told" in out
+    assert "-3600" not in out
+

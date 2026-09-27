@@ -58,13 +58,17 @@ from aslmp.errors import (
 from aslmp.errors.routing import timeout_causes
 from aslmp.timing import Chunk, Clock, Nanos
 
+
+class _Closeable(Protocol):
+    def close(self) -> None: ...
+
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Callable
 
     from aslmp.timing import TimingBuilder
 
 __all__ = [
-    "CANCEL_GRACE_S",
     "DEFAULT_BUFFER_CAPACITY",
     "DEFAULT_UDP_PIPELINE_DEPTH",
     "MAX_UDP_PIPELINE_DEPTH",
@@ -80,18 +84,35 @@ __all__ = [
     "WireResult",
     "accept_any",
     "cancelled_by_close",
+    "close_when_cancelled",
     "timeout_error",
 ]
 
 _NS_PER_S: Final = 1_000_000_000
 
-CANCEL_GRACE_S: Final = 1.0
-"""How long ``close()`` waits for a parked read or write to finish cancelling.
+def close_when_cancelled(pending: asyncio.Future[Any], sock: _Closeable) -> None:
+    """Cancel ``pending`` and close ``sock`` once the cancellation has landed.
 
-Cancelling a pending socket operation completes on the loop's next turn, so this is not
-a figure anything is expected to approach. It exists so that ``close()`` can never hang:
-past it, the socket is closed regardless.
-"""
+    Once it has landed -- not now, and not by waiting for it. Both halves were learned.
+
+    Not now: on a selector event loop (Linux, macOS) the cancellation is what unregisters
+    the socket's reader, and closing the descriptor first leaves a reader registered on
+    a number the next socket this process opens can be handed.
+
+    Not by waiting: the first version of this fix had ``close()`` await the cancellation,
+    and that await was a suspension point inside every close. A caller cancelled there
+    skipped the rest of ``aclose()`` -- no ``Disconnected``, ever, and a supervisor that
+    went on reporting ready -- and a failing transaction closing the connection there
+    let a sibling's close error claim the failure first, so ``ConnectionFailed`` named
+    the wrong cause. Both were found by review before release and reproduced against the
+    previous commit.
+
+    A done-callback keeps the order without the wait. The parked operation's own
+    cleanup (``remove_reader``) was attached to its inner future before the task awaited
+    it, so it is scheduled first; this callback, attached to the task, runs after.
+    """
+    pending.cancel()
+    pending.add_done_callback(lambda _done: sock.close())
 
 
 def cancelled_by_close(

@@ -729,6 +729,11 @@ class Connection:
             )
             binding = await self._transport.open(deadline)
         except BaseException as exc:
+            if self._state is ConnectionState.CLOSED:
+                # aclose() ran while the socket was opening, and whatever the open then
+                # did, the caller's decision stands: CLOSED, not FAILED.
+                await self._transport.close()
+                raise
             # Everything that can go wrong here leaves the connection FAILED and the
             # socket closed -- including a listener that raised, which is a connect
             # failure like any other and must not leave the state machine stranded in
@@ -750,6 +755,17 @@ class Connection:
                 )
             await self._transport.close()
             raise
+        if self._state is ConnectionState.CLOSED:
+            # aclose() ran while the socket was opening. It had no socket to close then,
+            # and marking this OPEN now would undo it: the client would handshake its way
+            # to READY holding a live socket -- on TCP, the PLC's only slot on that entry
+            # -- after its owner shut it down and a supervisor stood down on the
+            # Disconnected. Found by review 2026-09-27; it predated 0.2.0.
+            await self._transport.close()
+            raise SlmpConnectionClosedError(
+                "the connection was closed by this process while it was being opened; "
+                "the socket that finished opening afterwards has been closed too."
+            )
         self._state = ConnectionState.OPEN
         self._established_at = Nanos(self._clock())
         return binding

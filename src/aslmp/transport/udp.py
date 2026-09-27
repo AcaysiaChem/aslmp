@@ -73,7 +73,6 @@ from aslmp.errors import (
     SlmpTransportError,
 )
 from aslmp.transport.base import (
-    CANCEL_GRACE_S,
     DEFAULT_BUFFER_CAPACITY,
     MAX_UDP_PIPELINE_DEPTH,
     NULL_OBSERVER,
@@ -86,6 +85,7 @@ from aslmp.transport.base import (
     TransportObserver,
     WireResult,
     cancelled_by_close,
+    close_when_cancelled,
     timeout_error,
 )
 
@@ -287,6 +287,9 @@ class UdpTransport:
                 reason="already-open",
             )
         peer = await self._resolve(deadline)
+        # A fresh baton per binding. Nothing from the previous socket's life -- a reader
+        # that never let go, whatever the reason -- can then stall this one.
+        self._read_baton = asyncio.Lock()
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.setblocking(False)
@@ -356,10 +359,9 @@ class UdpTransport:
         """Close the socket and fail every waiter. Idempotent, never raises.
 
         Waiters queued behind the read baton are failed directly. The one coroutine
-        actually parked on the socket is cancelled first and allowed to finish
-        cancelling before the socket closes, for the reasons given on
-        :meth:`TcpTransport.close` -- on a selector event loop nothing else wakes it
-        before its deadline.
+        actually parked on the socket is cancelled, and the socket closes once that has
+        landed, for the reasons given on :meth:`TcpTransport.close` -- on a selector
+        event loop nothing else wakes it before its deadline. Never suspends.
         """
         sock = self._sock
         self._sock = None
@@ -372,14 +374,14 @@ class UdpTransport:
                 waiter.future.exception()
         self._waiters.clear()
         pending = self._pending
-        try:
-            if pending is not None and not pending.done():
-                self._closed_under = pending
-                pending.cancel()
-                await asyncio.wait({pending}, timeout=CANCEL_GRACE_S)
-        finally:
+        if pending is not None and not pending.done():
+            self._closed_under = pending
             if sock is not None:
-                sock.close()
+                close_when_cancelled(pending, sock)
+            else:
+                pending.cancel()
+        elif sock is not None:
+            sock.close()
 
     def _rebind(self, *, reason: str) -> None:
         """A fresh source port, so the vanished request's answer lands nowhere.
@@ -568,14 +570,25 @@ class UdpTransport:
             remaining = deadline.remaining_s()
             if remaining <= 0.0:
                 raise self._lost(waiter, deadline)
-            acquired = loop.create_task(self._read_baton.acquire())
+            # The lock this iteration takes, held locally: open() replaces the baton on
+            # every reconnect, and a release must go to the lock that was acquired.
+            baton = self._read_baton
+            acquired = loop.create_task(baton.acquire())
             racing: list[asyncio.Future[Any]] = [acquired, waiter.future]
             try:
                 await asyncio.wait(
                     racing, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
                 )
             except BaseException:
-                acquired.cancel()
+                # Cancelled here, the acquire may already have SUCCEEDED -- and then
+                # cancelling it is a no-op and the lock is held by nobody, forever: every
+                # pipelined exchange after it, a reconnect's handshake included, waited
+                # out its deadline against a peer answering at once. Found by review
+                # 2026-09-27; it predated 0.2.0.
+                if acquired.done() and not acquired.cancelled() and not acquired.exception():
+                    baton.release()
+                else:
+                    acquired.cancel()
                 raise
             if not acquired.done():
                 acquired.cancel()
@@ -583,13 +596,13 @@ class UdpTransport:
                     break
                 raise self._lost(waiter, deadline)
             if waiter.future.done():
-                self._read_baton.release()
+                baton.release()
                 break
             try:
                 data, source = await self._recv_one(waiter, deadline)
                 self._dispatch(data, source)
             finally:
-                self._read_baton.release()
+                baton.release()
         return await waiter.future
 
     async def _recv_one(
@@ -718,9 +731,10 @@ class UdpTransport:
 
 def _closed_in_flight() -> SlmpConnectionClosedError:
     return SlmpConnectionClosedError(
-        "the UDP socket was closed by this process while this request was in flight. "
-        "Nothing failed on the link; its outcome on the PLC is unknown because nobody "
-        "was left to read the answer."
+        "the UDP socket was closed by this process while this request was in flight -- "
+        "by aclose(), or because another transaction on this connection failed, in which "
+        "case its ConnectionFailed event names that failure. The outcome on the PLC is "
+        "unknown because nobody was left to read the answer."
     )
 
 

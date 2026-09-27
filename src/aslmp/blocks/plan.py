@@ -588,7 +588,9 @@ class _Bound(Generic[B]):
                 )
             except SlmpError as exc:
                 plc._enrich(exc, reader.summary, record)
-                plc._record_failure(txn, reader.summary, reader.subcommand, record)
+                plc._record_failure(
+                    txn, reader.summary, reader.subcommand, record, cause=exc
+                )
                 raise
             if raw.end_code != 0:
                 raise self._end_code(raw, reader, txn, record)

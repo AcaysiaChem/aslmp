@@ -998,3 +998,39 @@ def test_serve_flushes_its_banner_to_a_redirected_stdout(tmp_path: Path) -> None
         "an ephemeral entry reported port 0, so the banner is printed before the socket "
         "is bound and a harness still cannot find it"
     )
+
+
+_NUMBER_WORDS = {
+    word: value
+    for value, word in enumerate(
+        (
+            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+            "seventeen", "eighteen", "nineteen", "twenty",
+        )
+    )
+}
+
+
+def test_every_published_subcommand_count_matches_the_table() -> None:
+    """Five places said "eleven" after the twelfth subcommand landed; review caught it.
+
+    The README is the PyPI page, so a stale count there contradicts itself in public.
+    Historical entries in CHANGELOG.md are excluded on purpose: they describe a version
+    that really did have that many.
+    """
+    root = Path(__file__).resolve().parents[2]
+    pattern = re.compile(
+        r"\b([A-Za-z]+) (?:lazily imported )?(subcommands|modules|lines of text)\b"
+    )
+    paths = [root / "README.md", root / "docs" / "cli.md"]
+    paths += sorted((root / "src" / "aslmp" / "tools").glob("*.py"))
+    wrong = []
+    for path in paths:
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for match in pattern.finditer(line):
+                word = match.group(1).lower()
+                if word in _NUMBER_WORDS and _NUMBER_WORDS[word] != len(SUBCOMMANDS):
+                    wrong.append(f"{path.relative_to(root)}:{number}: {match.group(0)!r}")
+    assert not wrong, f"there are {len(SUBCOMMANDS)} subcommands:\n  " + "\n  ".join(wrong)
+

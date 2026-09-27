@@ -101,6 +101,7 @@ from aslmp.errors import (
     Diagnostics,
     SlmpCapabilityError,
     SlmpConfigurationError,
+    SlmpConnectionClosedError,
     SlmpError,
     SlmpHandshakeError,
     SlmpMonitoringTimerError,
@@ -243,6 +244,19 @@ the moment the state matches, and ``RemoteResult.polls`` says how many reads tha
 
 REMOTE_POLL_INTERVAL_SECONDS: Final = 0.005
 """Gap between SD203 observations while a remote state change settles."""
+
+
+
+def _closed_under(exc: BaseException) -> bool:
+    """Whether a transaction failed only because this process closed its connection.
+
+    A read raises :class:`~aslmp.errors.SlmpConnectionClosedError` directly. A write whose
+    request had gone out raises :class:`~aslmp.errors.SlmpOutcomeUnknownError` with it as
+    the cause, because the outcome on the PLC is unknown whoever closed the socket.
+    """
+    return isinstance(exc, SlmpConnectionClosedError) or isinstance(
+        exc.__cause__, SlmpConnectionClosedError
+    )
 
 
 def mirrored(function: F) -> F:
@@ -1044,7 +1058,7 @@ class Plc:
                 )
             except SlmpError as exc:
                 self._enrich(exc, summary, request)
-                self._record_failure(txn, summary, subcommand, request)
+                self._record_failure(txn, summary, subcommand, request, cause=exc)
                 raise
             if raw.end_code != 0:  # 4. raise, always. Never a falsy value.
                 failed = self._transaction(
@@ -1163,6 +1177,7 @@ class Plc:
         *,
         raw: RawResponse | None,
         request: bytes,
+        abandoned: bool = False,
     ) -> Transaction:
         """One record. ``generation`` and ``after_reconnect`` are the anti-lie fields."""
         generation = self._conn.generation
@@ -1188,10 +1203,17 @@ class Plc:
             response_frame=(
                 raw.raw if (self._capture_frames and raw is not None) else None
             ),
+            abandoned=abandoned,
         )
 
     def _record_failure(
-        self, txn: Txn, summary: CommandSummary, subcommand: int, request: bytes
+        self,
+        txn: Txn,
+        summary: CommandSummary,
+        subcommand: int,
+        request: bytes,
+        *,
+        cause: BaseException,
     ) -> None:
         """Emit a record for a transaction that failed on the wire, where there is one.
 
@@ -1202,11 +1224,21 @@ class Plc:
         fabricated ``sent_at`` would put a sample into the published histogram for a
         request that never left. A sink that raises here must not replace the PLC failure
         already on its way to the caller, so its error is counted and suppressed.
+
+        ``cause`` decides one field: a transaction cut off because this process closed
+        the connection is recorded as ``abandoned``, which is what keeps a clean shutdown
+        out of ``transactions_failed`` and out of a health monitor's failures.
         """
         if txn.timing.sent_at is None:
             return
         tx = self._transaction(
-            txn.timing.build(), txn, summary, subcommand, raw=None, request=request
+            txn.timing.build(),
+            txn,
+            summary,
+            subcommand,
+            raw=None,
+            request=request,
+            abandoned=_closed_under(cause),
         )
         with contextlib.suppress(SlmpSinkError):
             self._observe(tx)

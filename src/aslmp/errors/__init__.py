@@ -739,13 +739,22 @@ class SlmpConnectionLostError(SlmpTransportError):
 class SlmpConnectionClosedError(SlmpConnectionLostError):
     """This process closed the connection while the transaction was in flight.
 
-    What a caller whose request was waiting receives when ``aclose()`` -- or anything
-    else in this process -- closes the connection under it. It is not a failure of the
-    link: the PLC may have answered perfectly well, and nobody was left to read it. So it
-    is not counted in :class:`~aslmp.observability.Counters`, it emits no
-    :class:`~aslmp.observability.ConnectionFailed`, and the connection ends ``CLOSED``,
-    never ``FAILED`` -- which also means a supervisor does not start reconnecting a client
-    that was shut down on purpose.
+    What a caller whose request was waiting receives when this process closes the
+    connection under it. Two things do that, and they are reported differently:
+
+    * ``aclose()``. Nothing failed: the PLC may have answered perfectly well, and nobody
+      was left to read it. The transaction is counted as
+      :attr:`~aslmp.observability.Counters.transactions_abandoned`, not as a failure; no
+      :class:`~aslmp.observability.ConnectionFailed` is emitted; the connection ends
+      ``CLOSED``, never ``FAILED``, so a supervisor does not start reconnecting a client
+      that was shut down on purpose.
+    * Another transaction on the same connection failed, and closing the socket is how a
+      failure is handled. That failure is counted and emits ``ConnectionFailed`` with its
+      own cause, and the connection ends ``FAILED``. This transaction did not fail
+      itself, so it still raises this error and is still counted as abandoned.
+
+    Either way its record carries ``abandoned=True``, which is what lets a
+    :class:`~aslmp.health.HealthMonitor` ignore it.
 
     A subclass of :class:`SlmpConnectionLostError`, so every handler already written for a
     lost connection still catches it; catch this one by name to tell a shutdown you
